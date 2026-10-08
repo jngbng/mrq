@@ -1,0 +1,438 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/jngbng/mrq/schema/review.schema.json",
+  "title": "mrq review state",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "project",
+    "iid",
+    "title",
+    "web_url",
+    "mr_state",
+    "source_branch",
+    "diff_refs",
+    "me",
+    "capabilities",
+    "pulled_at",
+    "threads"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "project": {
+      "type": "string"
+    },
+    "iid": {
+      "type": "integer",
+      "minimum": 1
+    },
+    "title": {
+      "type": "string"
+    },
+    "web_url": {
+      "type": "string"
+    },
+    "mr_state": {
+      "enum": [
+        "opened",
+        "merged",
+        "closed",
+        "locked"
+      ]
+    },
+    "source_branch": {
+      "type": "string"
+    },
+    "diff_refs": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "base_sha",
+        "start_sha",
+        "head_sha"
+      ],
+      "properties": {
+        "base_sha": {
+          "type": "string"
+        },
+        "start_sha": {
+          "type": "string"
+        },
+        "head_sha": {
+          "type": "string"
+        }
+      }
+    },
+    "me": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "username",
+        "can_resolve"
+      ],
+      "properties": {
+        "id": {
+          "type": "integer"
+        },
+        "username": {
+          "type": "string"
+        },
+        "can_resolve": {
+          "type": "boolean"
+        }
+      }
+    },
+    "capabilities": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "draft_notes"
+      ],
+      "properties": {
+        "draft_notes": {
+          "type": "boolean"
+        }
+      }
+    },
+    "pulled_at": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "rendered_at": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "format": "date-time"
+    },
+    "threads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/thread"
+      }
+    }
+  },
+  "$defs": {
+    "thread": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "root_note_id",
+        "server",
+        "position",
+        "anchor",
+        "location",
+        "notes",
+        "local"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "root_note_id": {
+          "type": "integer"
+        },
+        "server": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "resolvable",
+            "resolved",
+            "repliable",
+            "updated_at",
+            "note_count"
+          ],
+          "properties": {
+            "resolvable": {
+              "type": "boolean"
+            },
+            "resolved": {
+              "type": "boolean"
+            },
+            "repliable": {
+              "type": "boolean"
+            },
+            "updated_at": {
+              "type": "string",
+              "format": "date-time"
+            },
+            "note_count": {
+              "type": "integer",
+              "minimum": 1
+            }
+          }
+        },
+        "position": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "position_type"
+          ],
+          "properties": {
+            "position_type": {
+              "enum": [
+                "text",
+                "image",
+                "file"
+              ]
+            },
+            "old_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "new_path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "old_line": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "new_line": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "line_range": {
+              "type": [
+                "object",
+                "null"
+              ]
+            }
+          },
+          "$comment": "GitLab 응답을 변형 없이 보관한다. position이 없는 general 코멘트는 null"
+        },
+        "anchor": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "line",
+            "context_before",
+            "context_after"
+          ],
+          "properties": {
+            "line": {
+              "type": "string"
+            },
+            "context_before": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "context_after": {
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "hunk": {
+              "type": [
+                "string",
+                "null"
+              ]
+            }
+          }
+        },
+        "location": {
+          "type": [
+            "object",
+            "null"
+          ],
+          "additionalProperties": false,
+          "required": [
+            "confidence",
+            "method"
+          ],
+          "properties": {
+            "path": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "line": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "line_end": {
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "confidence": {
+              "enum": [
+                "exact",
+                "fuzzy",
+                "stale"
+              ]
+            },
+            "method": {
+              "enum": [
+                "git-diff",
+                "anchor-search",
+                "context-anchor",
+                "none"
+              ]
+            }
+          },
+          "$comment": "position이 없거나 position_type != text 이면 null"
+        },
+        "notes": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "id",
+              "author",
+              "created_at",
+              "updated_at",
+              "body",
+              "mine"
+            ],
+            "properties": {
+              "id": {
+                "type": "integer"
+              },
+              "author": {
+                "type": "string"
+              },
+              "created_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "updated_at": {
+                "type": "string",
+                "format": "date-time"
+              },
+              "body": {
+                "type": "string"
+              },
+              "mine": {
+                "type": "boolean"
+              },
+              "suggestions": {
+                "type": "array"
+              }
+            }
+          }
+        },
+        "local": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "state",
+            "reply"
+          ],
+          "properties": {
+            "state": {
+              "enum": [
+                "todo",
+                "done",
+                "replied",
+                "skipped"
+              ]
+            },
+            "reply": {
+              "type": "string"
+            },
+            "touched_at": {
+              "type": [
+                "string",
+                "null"
+              ],
+              "format": "date-time"
+            },
+            "touched_by": {
+              "enum": [
+                "md",
+                "cli",
+                "push",
+                null
+              ]
+            },
+            "pushed_hash": {
+              "type": [
+                "string",
+                "null"
+              ]
+            },
+            "push_error": {
+              "type": [
+                "object",
+                "null"
+              ],
+              "additionalProperties": false,
+              "required": [
+                "op",
+                "reason",
+                "retryable",
+                "at"
+              ],
+              "properties": {
+                "op": {
+                  "enum": [
+                    "reply",
+                    "resolve"
+                  ]
+                },
+                "status": {
+                  "type": [
+                    "integer",
+                    "null"
+                  ]
+                },
+                "reason": {
+                  "enum": [
+                    "forbidden",
+                    "not-found",
+                    "conflict",
+                    "network",
+                    "unknown"
+                  ]
+                },
+                "retryable": {
+                  "type": "boolean"
+                },
+                "at": {
+                  "type": "string",
+                  "format": "date-time"
+                },
+                "message": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  }
+}
