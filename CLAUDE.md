@@ -18,6 +18,8 @@ GitLab MR의 리뷰 코멘트를 로컬 파일로 내려받아 Emacs/VSCode/AI�
 | `docs/spec/testing.md` | 공통 테스트 인프라 |
 | `docs/spec/repo-layout.md` | 리포 구조, 하위 프로젝트 툴체인, 적합성 테이블 |
 | `docs/decisions/` | 주요 갈림길의 선택과 근거 |
+| `docs/plans/README.md` | **계획 1~5 로드맵.** 다음에 무엇을 할지는 여기부터 |
+| `docs/plans/` | 진행 중인 계획서와 잔여 항목 |
 
 ## 구조
 
@@ -52,6 +54,9 @@ testdata/       세 구현이 공유하는 테스트 데이터
   가장 빠른 길이다.
 - **discussion 객체에 thread 레벨 `resolved`/`resolvable`/`updated_at`이 없다.**
   notes에서 계산한다. `individual_note: true`인 스레드에는 답글을 달 수 없다.
+- **`.git/info/exclude`는 `--git-common-dir`에 쓴다.** `--git-dir`은 linked
+  worktree에서 git이 읽지 않는 파일을 가리켜 등록이 조용히 무효가 된다.
+  저장 위치(`--show-toplevel`, worktree별)와는 다른 경로다.
 - **`system: true` 노트는 pull에서 전량 제외한다.** 안 걸러내면 노이즈가 절반을 넘는다.
 - **resolve 권한은 `pull`에서 확인해 `status`가 사전에 알린다.** 403을 사후 에러로
   다루지 않는다.
@@ -82,26 +87,31 @@ testdata/       세 구현이 공유하는 테스트 데이터
 ```bash
 make test              # 세 하위 전부
 make test-cli          # Python만
-make test-emacs
-make test-vscode
-make conformance       # 적합성 테이블 교차 실행
+make test-emacs        # 계획 4 까지는 안내 메시지만
+make test-vscode       # 계획 5 까지는 안내 메시지만
+make conformance       # 적합성 테이블 교차 실행 (계획 4 에서 생김)
 make lint
-make deps              # emacs: markdown-mode / vscode: npm ci
+make deps
 ```
 
-`cli/`에서 직접 돌릴 때:
+**`make`는 venv 가 활성화된 셸을 가정한다.** 활성화하지 않았다면 venv 바이너리를
+직접 부르는 쪽이 확실하다 — `make`가 `/usr/bin/python` 을 집어 `No module named
+pytest` 로 실패한다:
 
 ```bash
-pytest                 # 테스트
-pytest -k anchor       # 재앵커링만
-pytest -k roundtrip    # md 라운드트립만
-ruff format . && ruff check --fix .
+cd cli && ./.venv/bin/python -m pytest          # 전체 (163개)
+cd cli && ./.venv/bin/python -m pytest -k anchor
+cd cli && ./.venv/bin/ruff format . && ./.venv/bin/ruff check --fix .
 ```
+
+venv 가 없으면 `cd cli && uv sync && uv pip install -e .` (또는 `pip install -e .`).
 
 ## 작업 방식
 
 - 한 번에 한 단계씩. 단계가 끝나면 테스트를 돌리고 멈춘다.
-  단계 목록과 FR 매핑은 `docs/mrq-design.md` §6에 있다.
+  단계 목록, FR·계획 매핑, 계획별 범위는 모두 `docs/plans/README.md`에 있다.
+- 계획이 끝나면 그 계획서를 지우고 `docs/plans/README.md`의 표를 갱신한다.
+  계획서에만 있던 내용(모듈 분해, 제약)은 지우기 전에 스펙으로 옮긴다.
 - 설계가 바뀌면 `docs/mrq-design.md`와 해당 스펙을 같이 갱신한다. 갈림길을 새로
   선택했다면 `docs/decisions/`에 기록을 추가한다.
 - API 응답은 `cli/tests/fixtures/`에 픽스처로 저장해 네트워크 없이 테스트한다.

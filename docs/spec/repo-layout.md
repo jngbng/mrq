@@ -30,7 +30,7 @@ mrq/
   README.md  CLAUDE.md
   docs/
     PRD.md  mrq-design.md
-    spec/  decisions/
+    spec/  decisions/  plans/
   schema/
     review.schema.json           세 구현이 공유하는 계약
   testdata/                      어느 하위도 소유하지 않는 공유 데이터
@@ -38,17 +38,47 @@ mrq/
     conformance/anchor.json        앵커 검색 적합성 테이블
   cli/
     pyproject.toml
-    src/mrq/
+    src/mrq/                       모듈 분해는 아래 §2.1
     tests/
       fixtures/                    glab API 응답 (CLI 전용)
       bin/glab                     가짜 glab
-  plugin_emacs/
+  plugin_emacs/                    ← 계획 4 에서 생성
     mrq.el  mrq-flymake.el  ...
     test/
-  plugin_vscode/
+  plugin_vscode/                   ← 계획 5 에서 생성
     package.json  tsconfig.json
     src/  src/test/
 ```
+
+`plugin_emacs/`, `plugin_vscode/`, `testdata/conformance/`는 아직 없다. 각각 계획 4·5
+에서 만든다(`docs/plans/README.md`). 루트 `Makefile`의 해당 타깃은 그때까지 안내
+메시지만 출력한다.
+
+## 2.1 `cli/src/mrq/` 모듈
+
+각 모듈은 **바꿀 이유가 같은 것끼리** 모은다. `linemap`은 git diff 출력 형식이
+바뀔 때만, `search`는 탐색 전략이 바뀔 때만, `reanchor`는 단계 순서가 바뀔 때만
+손댄다. 셋을 한 파일에 두면 재앵커링 튜닝이 매번 파일 전체를 건드린다.
+
+| 모듈 | 책임 | 공개 표면 |
+|---|---|---|
+| `errors.py` | 종료 코드를 갖는 예외 계층 (`cli.md` §2) | `MrqError`(1), `UsageError`(1), `ParseError`(2), `ConflictError`(3), `PartialPushError`(4), `NetworkError`(5), `MrDetectionError`(6), `SchemaVersionError`(7) |
+| `cli.py` | argparse 디스패치. `_Parser`가 argparse의 exit 2를 `UsageError`로 바꾼다 | `build_parser`, `dispatch` |
+| `__main__.py` | 엔트리포인트. `MrqError`를 종료 코드로 바꾸는 **유일한** 지점 | `main(argv) -> int` |
+| `gitcmd.py` | git plumbing 래퍼. **모든** git 호출이 여기를 지난다. `-c core.quotepath=false` 기본 | `run`, `toplevel`, `git_common_dir`, `have_commit`, `has_path`, `fetch`, `show`, `diff_name_status`, `diff_u0`, `diff_u3` |
+| `glab.py` | `glab api` 래퍼. **모든** 네트워크 호출이 여기를 지난다 | `api(path, *, method, fields, body, paginate, check)` |
+| `store.py` | `.mrq/` 레이아웃, 원자적 쓰기, flock, git exclude 등록, 공통 진입점 | `open_review`, `ReviewContext`, `repo_root`, `mrq_dir`, `review_dir`, `review_json_path`, `review_md_path`, `ensure_git_exclude`, `read_current`, `write_current`, `clear_current`, `atomic_write_text`, `review_lock` |
+| `model.py` | `review.json` 데이터 클래스 + 직렬화 + 스키마 검증 | `Review`, `Thread`, `Server`, `Position`, `Anchor`, `Location`, `Local`, `Note`, `Me`, `Capabilities`, `DiffRefs`, `schema_path`, `validate`, `check_version`, `dumps`, `loads` |
+| `mr.py` | MR 탐지와 메타데이터 | `PROJECT`, `MrInfo`, `detect`, `project_info`, `diff_refs`, `whoami`, `draft_notes_available`, `current_branch` |
+| `discussions.py` | discussions 응답 → `Thread`. 시스템 노트 필터와 파생 필드 | `fetch`, `to_threads` |
+| `linemap.py` | git diff 기반 경로 맵 / 라인 맵 | `PathMap`, `path_map`, `LineMap`, `line_map` |
+| `anchor.py` | `anchor` 추출 (line, context 3줄, hunk) | `CONTEXT_LINES`, `read_lines`, `extract`, `hunk_for` |
+| `search.py` | 문자열 탐색 fallback. git·파일시스템을 모른다 | `WINDOW`, `find` |
+| `reanchor.py` | 재앵커링 오케스트레이션 | `MR_HEAD_REFSPEC`, `Stats`, `ensure_commits`, `reanchor_all` |
+| `commands/*.py` | 명령별 `run(args) -> int`. 하나의 명령이 하나의 파일 | `pull.run`, `reanchor.run` |
+
+파서와 렌더러(계획 2)는 `review_md.py`로 들어온다. `push`(계획 3)는
+`commands/push.py`이며 `glab.py`의 확장을 요구한다 — `docs/plans/2026-10-12-cli-core-residuals.md`의 R3.
 
 ### `testdata/`를 분리하는 이유
 
@@ -81,6 +111,16 @@ CLI를 루트에 두면 `pytest`가 cd 없이 돌아 편하지만 리포 루트�
 
 - `cli`는 `pip install -e cli/`로도 설치 가능해야 한다(MUST). uv는 개발 편의이며
   필수 의존이 아니다
+- **HTTP 클라이언트를 의존에 넣지 않는다**(MUST NOT) — `requests`, `httpx`,
+  표준 라이브러리의 `urllib` 모두. 네트워크는 `glab api` 서브프로세스만 쓴다.
+  **git 래퍼 라이브러리도 넣지 않는다**(MUST NOT) — `GitPython` 등. git은
+  plumbing 서브프로세스만 쓴다.
+
+  이 두 금지가 "모든 git 호출은 `gitcmd`, 모든 네트워크는 `glab`"을 **grep으로
+  증명 가능하게** 만든다. 그 증명이 `reanchor`가 네트워크를 타지 않는다는 것을
+  확인하는 방법이었다. 호출 지점이 둘로 늘어나면 `-c core.quotepath=false` 같은
+  공통 설정이 한쪽에만 적용되고, 재앵커링이 git diff 출력을 직접 봐야 한다는
+  요구(`reanchoring.md`)도 래퍼에 가려진다.
 - `plugin_emacs`에 Eask를 쓰지 않는다. Eask가 실질적으로 해주는 일은 테스트용
   `markdown-mode` 설치인데, MELPA 발행이 future work인 동안은 `make deps`가
   `package-install`을 돌리는 것으로 충분하다. 발행 시점에 도입한다

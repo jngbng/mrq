@@ -1,0 +1,163 @@
+# 구현 계획 로드맵
+
+구현을 다섯 개의 계획으로 나눠 실행한다. 각 계획은 **그 자체로 동작하는 결과물**을
+내고, 끝나면 계획서를 지우고 이 문서를 갱신한다 — 완료된 계획의 내용은 코드와
+git 히스토리, 그리고 스펙에 남는다.
+
+| 계획 | 단계 | 결과물 | 상태 |
+|---|---|---|---|
+| 1 | 0~3 | `mrq pull`이 정확한 `review.json`을 만든다 | **완료** (2026-10-12, 43 커밋) |
+| 2 | 4~8 | 렌더 → 편집 → `sync` → `status`. AI가 코멘트를 처리할 수 있다 | 다음 |
+| 3 | 9, 10, 12 | `push`까지 완결된 CLI | |
+| 4 | 11 | `plugin_emacs` | |
+| 5 | 13 | `plugin_vscode` | |
+
+새 계획을 시작할 때는 `superpowers:writing-plans`로 `docs/plans/YYYY-MM-DD-<주제>.md`를
+쓴다. 실행은 `superpowers:subagent-driven-development`.
+
+## 단계와 FR 매핑
+
+한 번에 한 단계씩. 단계가 끝나면 테스트를 돌리고 멈춘다.
+
+| # | 단계 | FR | 계획 | 상태 |
+|---|---|---|---|---|
+| 0 | 리포 스캐폴딩 — `Makefile`, `cli/`, `schema/`, `testdata/` | — | 1 | 완료 |
+| 1 | 상태 저장 위치, 원자적 쓰기, 락, 스키마 검증 | FR-018 | 1 | 완료 |
+| 2 | `mrq pull` — discussions 조회, 시스템 노트 필터, 파생 필드 | FR-001, FR-002 | 1 | 완료 |
+| 3 | **재앵커링 + 테스트 12종 + 품질 게이트** | FR-003 | 1 | 완료 |
+| 4 | `review.md` 렌더러 | FR-004 | 2 | |
+| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | 2 | 두 번째 위험 지점 |
+| 6 | 충돌 감지 + `--prefer` | FR-006 | 2 | |
+| 7 | `mrq status`, `mrq list` | FR-007 | 2 | |
+| 8 | `mrq reply`, `mrq state` | FR-012 | 2 | VSCode와 AI의 쓰기 경로 |
+| 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | 3 | |
+| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | 3 | |
+| 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | 4 | |
+| 12 | `--draft` 모드 | FR-013 | 3 | |
+| 13 | VSCode 확장 | FR-015 | 5 | |
+
+1번이 가장 앞인 이유: 원자성을 뒤늦게 추가하면 모든 쓰기 경로를 다시 훑어야 하고,
+저장 위치를 바꾸면 이미 쌓인 리뷰 상태가 고아가 된다. 남은 계획에도 같은 모양의
+항목이 있다 — 계획 3의 `glab.api` 확장이 그렇다.
+
+FR 정의는 `docs/PRD.md` §5, 각 FR의 규범 스펙은 그 표의 마지막 열이 가리킨다.
+
+---
+
+## 계획 1 — 완료
+
+0~3단계. `mrq pull`과 `mrq reanchor`가 동작하고, 재앵커링 품질 게이트가
+`exact 17 / fuzzy 3 / stale 1`(81% / 4.8%, 목표 ≥75% / ≤10%)로 통과한다. 163개 테스트.
+
+구현된 FR: FR-001(MR 탐지), FR-002(코멘트 수집), FR-003(재앵커링), FR-018(상태 저장).
+
+**잔여 항목은 `2026-10-12-cli-core-residuals.md`에 있다.** 최종 브랜치 리뷰가
+"나중에"로 판정한 것들이고, 각 항목에 그것을 먼저 필요로 하는 계획이 적혀 있다.
+계획 2를 시작하기 전에 읽을 것.
+
+---
+
+## 계획 2 — 편집 왕복 (4~8단계)
+
+**결과물:** `pull` → 편집 → `sync` → `status`가 한 바퀴 돈다. 사람과 AI가
+`review.md`로 코멘트를 처리하고, 전송될 내용을 확인할 수 있다. 아직 전송은 못 한다.
+
+| 단계 | 내용 | FR | 스펙 |
+|---|---|---|---|
+| 4 | `review.md` 렌더러 | FR-004 | `spec/review-md.md` §1~5 |
+| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | `spec/review-md.md` §6~8 |
+| 6 | 충돌 감지 + `sync --prefer` | FR-006 | `spec/data-model.md` §5 |
+| 7 | `mrq status`, `mrq list` | FR-007 | `spec/cli.md` §7, §8 |
+| 8 | `mrq reply`, `mrq state` | FR-012 | `spec/cli.md` §10 |
+
+**시작 조건과 첫 과제.** 계획 1의 `pull`은 json만 쓴다. `--render`를 주면
+"렌더러는 아직 구현되지 않았습니다"를 stderr에 내고 exit 1하며, `--all`은 파싱만
+되고 아무 일도 하지 않는다. **계획 2의 첫 과제가 렌더러를 넣고 그 기본값을
+뒤집는 것이다** — `--render`가 동작하게 되고 `--all`이 의미를 갖는다.
+
+그 전에 잔여 항목 R1·R2를 처리하는 것이 좋다 (`model`의 예외가 종료 코드 계약을
+빠져나가는 것, `pull`이 스키마 버전 불일치에서 복구 못 하는 것). 둘 다 계획 2가
+건드리는 코드 경로이고, R2는 `additionalProperties: false` 때문에 필드를 하나
+추가하는 순간 터진다.
+
+**가장 위험한 부분이 5단계다.** `review.md`는 사람과 AI 모두의 쓰기 면이므로
+파서가 임의의 생성된 마크다운을 견뎌야 한다. `spec/review-md.md` §8이 요구하는
+property 테스트(표, 중첩 펜스, 수평선, 앵커 문법 인용, CRLF)를 가볍게 넘기지 말 것.
+라운드트립 성질은 `render(parse(render(j))) == render(j)` 바이트 일치다.
+
+**잊기 쉬운 것:** 전송하지 않은 작업이 있는 스레드는 서버에서 resolve됐어도
+`--all` 없이 렌더해야 한다(`spec/review-md.md` §5). 동료가 내 스레드를 먼저
+resolve했을 때 내 답글이 사라지면 안 된다.
+
+---
+
+## 계획 3 — 전송 (9, 10, 12단계)
+
+**결과물:** `push`까지 완결된 CLI. 답글과 resolve가 GitLab에 올라가고, 중간에
+죽어도 중복 없이 복구된다.
+
+| 단계 | 내용 | FR | 스펙 |
+|---|---|---|---|
+| 9 | `mrq push`(일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | `spec/cli.md` §9 |
+| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | `spec/cli.md` §11~13 |
+| 12 | `--draft` 모드 | FR-013 | `spec/cli.md` §9 |
+
+**시작 전에 반드시 할 것.** 잔여 항목 R3·R4다. `glab.api`가 HTTP 상태를 돌려주지
+않아 `local.push_error.status`를 채울 수 없고, 가짜 `glab` 하네스가 페이지네이션과
+상태 코드를 표현할 수 없어 멱등성·크래시 복구 테스트(`spec/testing.md` §5)를 쓸 수
+없다. 둘은 같은 변경에서 함께 해소된다. R3은 지금 당장의 버그도 포함한다 —
+브랜치 이름에 `#`·`&`·`%`·`+`가 들어가면 MR 탐지 요청이 망가진다.
+
+**잊기 쉬운 것:** resolve 403은 정상 경로다. 권한은 `pull`에서 확인해 `status`가
+사전에 알리고, 그래도 403이 나면 `push_error`에 기록하고 state를 `replied`로
+강등한다. `--resolve auto`에서 권한이 없어 생략한 경우는 exit 0이다 — 요청하지
+않은 일은 실패가 아니다.
+
+---
+
+## 계획 4 — `plugin_emacs` (11단계)
+
+**결과물:** flymake 백엔드와 목록 버퍼. 소스 ↔ 코멘트 왕복이 닫힌다.
+
+FR-014. 스펙은 `spec/editor.md` §1~3.
+
+**이 계획이 만드는 것 둘.** `plugin_emacs/` 디렉터리 자체와,
+`testdata/conformance/anchor.json` 적합성 테이블(`spec/repo-layout.md` §4.1).
+**이 구현이 그 테이블의 기준이 되고 계획 5가 그것을 통과해야 한다.** 결정 0003이
+"저장 안 된 버퍼의 앵커 한 줄 검색"을 세 언어에 복제했고, 그 테이블만이 셋이 같게
+동작하는 것을 강제한다(`spec/repo-layout.md` §4.1). 테이블 없이 계획 5를 시작하면
+비교할 기준이 없어 "둘 다 그럴듯하게 동작하지만 서로 다르다"를 발견할 방법이 없다.
+
+**잊기 쉬운 것:** `spec/editor.md` §1의 일곱 줄 규범이 에디터가 할 수 있는 일의
+경계다. 특히 `review.md`를 파싱하지 않고, `review.json`을 직접 쓰지 않고,
+`schema_version`을 확인하고, git·네트워크를 호출하지 않는다. 위치 보정은
+`spec/reanchoring.md` §6의 범위(저장 안 된 버퍼의 `location.line ± 200`, 완전 일치
+→ strip 일치, **후보가 유일할 때만**)만 수행한다.
+
+`mrq.el`은 `markdown-mode`에 하드 의존한다. Eask는 쓰지 않는다 — MELPA 발행이
+future work인 동안은 `make deps`의 `package-install` 한 줄로 충분하다.
+
+---
+
+## 계획 5 — `plugin_vscode` (13단계)
+
+**결과물:** Diagnostics + CodeLens. 문제 패널과 `F8` 이동.
+
+FR-015. 스펙은 `spec/editor.md` §4.
+
+**계획 4의 적합성 테이블을 통과해야 한다.** 그게 이 계획의 가장 중요한 수락 조건이다.
+
+MVP에서 `@vscode/test-electron` 하네스를 쓰지 않는다. 확장이 얇아 로직(json 읽기,
+앵커 검색)이 전부 순수 함수이고 vitest로 덮인다. Diagnostics/CodeLens 배선은 수동
+확인으로 둔다.
+
+**잊기 쉬운 것:** CodeLens의 `✓ Resolve` / `💬 Reply`는 `mrq state` / `mrq reply`를
+호출한다. md를 파싱하지도, json을 직접 쓰지도 않는다. 그 CLI 명령이 계획 2에
+포함된 이유가 바로 이 확장이다.
+
+---
+
+## 계획을 넘어선 것
+
+`docs/mrq-design.md` §6의 future work — 개별 노트 답글, `suggestions` 적용,
+Windows 지원, 스키마 마이그레이션, 팀 배포, fork 워크플로.

@@ -260,6 +260,9 @@
           ],
           "additionalProperties": false,
           "required": [
+            "path",
+            "line",
+            "line_end",
             "confidence",
             "method"
           ],
@@ -298,7 +301,7 @@
               ]
             }
           },
-          "$comment": "position이 없거나 position_type != text 이면 null"
+          "$comment": "position이 없거나 position_type != text 이면 null. path/line/line_end 는 null 을 허용하지만 키 자체는 required 다 — asdict() 는 항상 셋을 내보내고, 세 구현이 이 파일을 읽으므로 빠진 키는 Python TypeError 대신 분명한 스키마 에러로 걸려야 한다."
         },
         "notes": {
           "type": "array",

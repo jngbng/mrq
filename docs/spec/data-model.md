@@ -27,6 +27,14 @@
 - `mrq`는 모든 명령의 시작에서 `.git/info/exclude`에 `/.mrq/`가 있는지 확인하고
   없으면 추가해야 한다(MUST). `.gitignore`는 건드리지 않는다(MUST NOT) — 사용자
   개인 도구의 항목을 팀 리포 히스토리에 넣지 않는다
+- exclude 파일의 위치는 **`git rev-parse --git-common-dir`** 이다(MUST).
+  `--git-dir`을 쓰면 안 된다(MUST NOT) — linked worktree에서 `--git-dir`은
+  worktree 전용 디렉터리(`.git/worktrees/<name>`)를 가리키고 **git은 거기의
+  `info/exclude`를 읽지 않는다.** 그대로 두면 worktree 안에서 등록이 조용히
+  무효가 되고 `.mrq/`가 `git add -A` 한 번에 커밋된다.
+
+  저장 위치(`--show-toplevel`, worktree별)와 혼동하지 말 것. 둘은 목적이 다르다 —
+  리뷰 상태는 worktree마다 독립이고, exclude는 clone 단위 설정이다.
 
 ### 원자성과 락
 
@@ -163,8 +171,15 @@ MVP에는 마이그레이션 구현체가 없다. 거부 경로만 구현한다(
 에디터는 `location`만 읽어야 한다(MUST). `position.new_line`을 위치로 쓰면
 안 된다(MUST NOT) — 작업 트리가 이미 바뀌어 있다.
 
-`position`은 GitLab 응답을 변형 없이 보관해야 한다(MUST). `push`가 draft note를
-만들 때 그대로 되돌려 보내야 하기 때문이다.
+`position`은 GitLab 응답을 변형 없이 보관해야 한다(MUST). 두 가지 이유다 —
+재앵커링이 `new_line`/`old_line`/`position_type`을 읽어 분기하고, 어떤 근거로
+`location`이 계산됐는지 사후에 확인할 수 있어야 한다.
+
+`push`가 되돌려 보내기 때문은 **아니다.** mrq는 기존 discussion에 답글만 달고
+새 diff note를 만들지 않으므로, 전송 경로(`POST .../discussions/:did/notes`,
+`PUT .../discussions/:did`, `POST draft_notes`의 `in_reply_to_discussion_id`)에
+`position` 파라미터가 들어가는 곳이 없다. 따라서 `position_type`이 `image`일 때의
+`width`/`height`/`x`/`y` 좌표를 `Position`에 담지 않는 것은 손실이 아니다.
 
 ### 4.2 `server.*`는 전부 파생값이다
 
@@ -199,8 +214,11 @@ GitLab의 discussion 객체에는 `{id, individual_note, notes[]}`만 있다. th
 
 `anchor` 추출과 재앵커링에서 파일을 읽을 때:
 
-- `\r\n`을 `\n`으로 정규화한 뒤 비교한다(MUST). CRLF 리포에서 `core.autocrlf`
-  설정에 따라 `git show`와 작업 트리의 개행이 달라져 모든 앵커가 어긋난다
+- 개행은 `\n`으로 정규화된 상태로 비교한다(MUST). 실제 변환은 Python 의 text 모드가
+  담당한다 — `subprocess(text=True)`(git 경로)와 `Path.read_text()`(작업 트리 경로)가
+  모두 universal newlines 를 적용하므로 양쪽이 이미 LF 로 들어온다.
+  구현에 `replace("\r\n", "\n")`를 남겨도 되지만 그것이 정규화의 근거는 아니다 —
+  바이너리 모드로 바뀔 경우를 대비한 방어적 중복이다
 - UTF-8로 디코딩할 수 없는 파일은 `confidence: "stale"`, `method: "none"`으로
   둔다(MUST). `location: null`이 아니다 — 텍스트 위치를 가진 코멘트인데 찾지
   못한 것이므로 품질 지표에 드러나야 한다. 예외를 전파해 `pull` 전체를
@@ -331,3 +349,14 @@ GitLab 응답의 `suggestions` 배열을 변형 없이 보관해야 한다(MUST)
 
 `pull`은 기존 `local.*`를 보존해야 한다(MUST) — 같은 스레드 id가 있으면 그대로 두고,
 서버에서 사라진 스레드만 제거한다.
+
+> **알려진 데이터 손실 경로 (계획 2·3에서 결정할 것).** 보존은 "직전 json에 같은
+> id가 있을 때"로 정의되어 있으므로, 스레드가 한 번 응답에서 빠졌다가 다시
+> 나타나면 그 사이의 `local.*`가 영구 소실된다. 서버에서 진짜로 삭제된 경우라면
+> 맞는 동작이지만, `glab --paginate`가 페이지를 조용히 빠뜨리는 식의 일시적
+> 결손에서는 전송하지 않은 답글이 복구 불가로 사라진다.
+>
+> 완화책: `local.reply`가 비어 있지 않거나 `local.state != todo`인 스레드는
+> 응답에 없어도 제거하지 말고 "서버에서 사라짐"으로 표시만 한다. 지금 넣지 않는
+> 이유는 그 표시를 렌더링·`status`·`push`가 어떻게 다룰지가 계획 2·3의 영역이기
+> 때문이다.

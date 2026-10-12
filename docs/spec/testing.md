@@ -72,6 +72,21 @@ cli/tests/bin/glab
 - `permissions.project_access.access_level`이 20인 프로젝트 (403 경로)
 - `position_type`이 `image`인 노트
 
+### 실제 API 응답과 대조한다
+
+손으로 쓴 픽스처는 실제 응답과 어긋날 수 있다. 실험용 프로젝트
+**https://gitlab.com/jngbng/mr-helper** 에 커밋과 MR을 만들어 실제 응답을 받고,
+`cli/tests/fixtures/` 의 픽스처와 필드 구성을 대조한다.
+
+```sh
+glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
+  --paginate --output ndjson
+```
+
+이것은 **일회성 대조**이며 테스트 경로가 아니다. 단위 테스트는 네트워크를 쓰지
+않는다(§2). 픽스처를 갱신할 때는 사용자 이름·토큰·사내 호스트명이 섞여 들어가지
+않는지 확인한다.
+
 ### `testdata/` — 공유 데이터
 
 - `review/*.json` — 완성된 `review.json` 샘플. 세 구현이 모두
@@ -158,7 +173,8 @@ cli/tests/bin/glab
 "코멘트 15개 / 30분"은 단위 테스트로 잡을 수 없다. 두 단계로 나눈다.
 
 1. **선행 지표에 테스트**: `reanchoring.md` §8의 품질 회귀 게이트 (`exact ≥ 75%`)
-2. **수동 측정 1회**: 실제 MR 하나로 끝까지 돌리고 단계별 시간을 기록한다
+2. **수동 측정 1회**: 실제 MR 하나로 끝까지 돌리고 단계별 시간을 기록한다.
+   https://gitlab.com/jngbng/mr-helper 에 코멘트 15개가 달린 MR을 만들어 쓴다
 
 ### 수동 측정 체크리스트
 

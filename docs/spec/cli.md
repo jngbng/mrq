@@ -112,6 +112,18 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 직접 확인한다 — `:fullpath` 확장, `--paginate --output ndjson`, `-F key=@-`.
 버전 문자열은 표시용으로만 쓴다.
 
+### 알려진 공백: `api()` 는 HTTP 상태를 돌려주지 않는다
+
+현재 래퍼는 성공 시 파싱된 JSON, 실패 시 `NetworkError`(또는 `check=False` 면
+`None`)만 준다. 이것으로는 `local.push_error.status`(`data-model.md` §4.8)를 채울 수
+없다 — 403 과 404 와 네트워크 실패를 구분할 수 없기 때문이다.
+
+`push` 를 구현하는 계획에서 `api()` 를 확장해야 한다(MUST). 상태 코드와 stderr 를
+함께 돌려주는 형태로 바꾸면 `check=False` 의 또 다른 모호성도 같이 해소된다 —
+지금은 "호출 실패"와 "성공했지만 본문이 비었음"이 모두 `None` 이다. 이 계획의
+유일한 `check=False` 호출처(`draft_notes_available`)는 엔드포인트가 성공 시 `[]` 를
+주므로 영향을 받지 않는다.
+
 ### 사용하는 엔드포인트
 
 | 용도 | 호출 |
@@ -229,7 +241,17 @@ exit 2(파싱 에러)일 때:
 `sync`의 4·5단계만 수행한다. md를 파싱하지 않으므로 충돌도 파싱 에러도 발생하지
 않는다. `--json`은 `{"anchors": {...}}`만 담는다.
 
-사용자가 소스를 많이 고쳐 위치가 어긋났다고 느낄 때 쓴다. 네트워크를 쓰지 않는다.
+사용자가 소스를 많이 고쳐 위치가 어긋났다고 느낄 때 쓴다.
+
+**네트워크를 쓰지 않는다**(MUST). 이것은 주석이 아니라 강제해야 하는 계약이다 —
+`head_sha`가 로컬에 없어도 **fetch를 시도하면 안 된다**(MUST NOT). 커밋이 없으면
+문자열 탐색 전용으로 degrade하고, 사용자가 git 매핑을 되찾고 싶으면 `pull`을 돌린다.
+
+이유: `reanchor`를 `pull`과 분리한 유일한 근거가 "로컬이라 자주 돌려도 안전하다"는
+것이고, 에디터가 이 경로를 호출한다(`editor.md` §3.2의 `r` 키). 오프라인에서
+fetch를 시도하면 TCP 타임아웃만큼 멈추며, 하필 로컬 전용 명령이 가장 필요한
+순간에 그렇게 된다. 구현에서는 `ensure_commits(..., allow_fetch=False)`로 막고
+테스트로 고정한다.
 
 ---
 

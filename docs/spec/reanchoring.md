@@ -70,11 +70,27 @@ json만 커지고 점수 품질은 거의 개선되지 않는다.
 ### `anchor.hunk` — 리뷰어가 본 diff
 
 ```sh
-git diff -U3 <start_sha> <head_sha> -- <new_path>
+git diff -M -U3 <start_sha> <head_sha> -- <old_path> <new_path>
 ```
 
 이 diff가 MR이 보여주는 변경 전체이므로, 여기서 대상 줄을 포함하는 hunk 하나를
 그대로 떼어 저장한다(MUST). hunk 헤더(`@@ ... @@`)를 포함한다.
+
+**양쪽 pathspec이 필수다**(MUST). 경로를 하나만 주면 rename된 파일에서 git이
+"새 파일 추가"로 보고하고 hunk에 파일 전체가 `+`로 들어온다. `-M`은 사용자의
+`diff.renames` 설정으로부터 독립시키기 위한 것이다(SHOULD) — 최신 git은 기본값이
+`true`이지만, 끈 사용자에게도 같게 동작해야 한다. 실측:
+
+| 호출 | `diff.renames` | 결과 |
+|---|---|---|
+| `-U3 … -- <new_path>` | 기본(true) | `@@ -0,0 +1,9 @@` 전체가 `+` |
+| `-M -U3 … -- <new_path>` | 기본 | 같음 — 경로 하나로는 `-M`도 못 구한다 |
+| `-U3 … -- <old> <new>` | 기본 | `@@ -2,6 +2,7 @@` 한 줄만 |
+| `-U3 … -- <old> <new>` | `false` | 전체가 `+` |
+| `-M -U3 … -- <old> <new>` | `false` | 한 줄만 |
+
+`review.md`는 이 hunk를 ```diff 펜스로 렌더하므로, 잘못되면 큰 파일이 rename될 때
+그 스레드 블록에 파일 전체가 쏟아진다. `old_path == new_path`면 중복을 제거한다.
 
 - `start_sha`가 로컬에 없으면 `head_sha`와 같은 방식으로 fetch한다 (§2)
 - 그래도 없거나 해당 줄을 포함하는 hunk를 찾지 못하면 `hunk: null`이다.
@@ -111,8 +127,15 @@ pathspec을 주면 rename 탐지가 동작하지 않으므로 전체로 한 번 
 ### 5.1 1단계 — git 라인 매핑 (주 전략)
 
 ```sh
-git diff -M -U0 <head_sha> -- <mapped_path>
+git diff -M -U0 <head_sha> -- <head_path> <mapped_path>
 ```
+
+**경로를 양쪽 모두 넘겨야 하고, 존재 확인은 `head_path`로 해야 한다**(MUST).
+rename된 파일은 `head_sha` 시점의 이름과 작업 트리의 이름이 다르다. 작업 트리
+이름으로 존재를 확인하면 `head_sha`에 없으므로 항상 실패하고, diff에 경로를 하나만
+넘기면 git이 "새 파일 추가"로 보고한다. 둘 중 하나라도 틀리면 **renamed 파일에서
+git 매핑이 조용히 전혀 동작하지 않고** 모든 코멘트가 문자열 탐색으로 내려간다 —
+에러 없이 품질만 떨어지므로 알아채기 어렵다.
 
 `@@ -a,b +c,d @@` 헤더만 파싱해 `head_sha` → 작업 트리 라인 맵을 만든다.
 
@@ -140,6 +163,12 @@ c. 파일 전체에서 anchor.line이 유일하면 채택 → fuzzy / anchor-sea
 d. 실패 → stale / none
 ```
 
+**공백뿐인 앵커는 a 단계만 쓴다**(MUST). `anchor.line`이 비었거나 공백뿐이면
+창 안에서 **완전 일치가 정확히 하나일 때만** 채택하고, b·c 단계와 context 점수
+계산을 모두 건너뛴다. 빈 줄 주변은 또 빈 줄이라 strip 비교·유일성 가드·context
+점수가 셋 다 근거를 잃는다. 빈 문자열과 공백뿐인 문자열은 똑같이 다룬다 —
+공백이 비어 있음보다 더 유의미하지 않다.
+
 **2c(파일 전체 유일성 탐색)가 반드시 있어야 한다**(MUST). 함수 블록이 파일 안에서 멀리
 옮겨지면 git은 delete + add로 보고하고 ±50 창도 벗어난다 — 리팩터링 중인 MR에서
 흔하다. "파일 전체에서 유일하면"이라는 유일성 가드가 오탐 없이 이 경우를 건진다.
@@ -155,6 +184,12 @@ d. 실패 → stale / none
 `anchor.context_before`의 마지막 줄(보통 살아남은 context 줄)을 1·2단계로 위치시키고
 **그 바로 아래**에 붙인다 → `{confidence: "fuzzy", method: "context-anchor"}`.
 실패하면 `stale`이다.
+
+context 줄이 파일의 **마지막 줄**이면 아래에 붙일 자리가 없다. 이때는 context 줄
+자신에 붙인다(MUST) — 가장 가까운 살아남은 줄이고 `confidence: "fuzzy"`가 이미
+근사임을 알린다. `stale`로 버리지 않는다.
+
+`context_before`가 비어 있으면(삭제된 줄이 파일 1행이었던 경우) `stale`이다.
 
 삭제된 코드에 대한 코멘트는 "이 근처에서 지운 것에 대한 말"이므로 근처에 붙이는 것이
 맞고, 파일 1행에 몰아두는 것보다 유용하다.

@@ -1,0 +1,139 @@
+import json
+
+import jsonschema
+import pytest
+
+from mrq import model
+from mrq.errors import SchemaVersionError
+
+
+def make_review(**overrides) -> model.Review:
+    thread = model.Thread(
+        id="a1b2c3d4e5f6",
+        root_note_id=5566,
+        server=model.Server(
+            resolvable=True,
+            resolved=False,
+            repliable=True,
+            updated_at="2026-10-05T15:30:00+09:00",
+            note_count=2,
+        ),
+        position=model.Position(
+            position_type="text",
+            old_path="src/api/client.py",
+            new_path="src/api/client.py",
+            old_line=None,
+            new_line=88,
+            line_range=None,
+        ),
+        anchor=model.Anchor(
+            line="    resp = session.get(url)",
+            context_before=["def fetch(url):", "    session = make_session()"],
+            context_after=["    return resp.json()"],
+            hunk="@@ -84,6 +84,9 @@\n+    resp = session.get(url)\n",
+        ),
+        location=model.Location(
+            path="src/api/client.py",
+            line=102,
+            line_end=None,
+            confidence="exact",
+            method="git-diff",
+        ),
+        notes=[
+            model.Note(
+                id=5566,
+                author="jdoe",
+                created_at="2026-10-05T14:02:11+09:00",
+                updated_at="2026-10-05T14:02:11+09:00",
+                body="타임아웃 설정이 빠졌습니다.",
+                mine=False,
+                suggestions=[],
+            )
+        ],
+        local=model.Local(),
+    )
+    data = {
+        "schema_version": model.SCHEMA_VERSION,
+        "project": "group/sub/project",
+        "iid": 1234,
+        "title": "Add retry logic to API client",
+        "web_url": "https://gitlab.example.com/group/sub/project/-/merge_requests/1234",
+        "mr_state": "opened",
+        "source_branch": "feat/retry",
+        "diff_refs": model.DiffRefs("0000aaa", "0000bbb", "abc1234"),
+        "me": model.Me(id=7, username="bongya", can_resolve=True),
+        "capabilities": model.Capabilities(draft_notes=True),
+        "pulled_at": "2026-10-11T09:12:00+09:00",
+        "rendered_at": None,
+        "threads": [thread],
+    }
+    data.update(overrides)
+    return model.Review(**data)
+
+
+def test_roundtrip():
+    review = make_review()
+    assert model.loads(model.dumps(review)) == review
+
+
+def test_dumps_ends_with_newline():
+    assert model.dumps(make_review()).endswith("\n")
+
+
+def test_dumps_keeps_hangul_readable():
+    assert "타임아웃" in model.dumps(make_review())
+
+
+def test_null_location_roundtrips():
+    # 파일 외 코멘트와 이미지 코멘트는 location 이 null 이다.
+    review = make_review()
+    review.threads[0].position = None
+    review.threads[0].anchor = None
+    review.threads[0].location = None
+    assert model.loads(model.dumps(review)).threads[0].location is None
+
+
+def test_dumps_rejects_invalid_confidence():
+    review = make_review()
+    review.threads[0].location.confidence = "shifted"
+    with pytest.raises(jsonschema.ValidationError):
+        model.dumps(review)
+
+
+def test_dumps_rejects_unknown_state():
+    review = make_review()
+    review.threads[0].local.state = "maybe"
+    with pytest.raises(jsonschema.ValidationError):
+        model.dumps(review)
+
+
+def test_higher_schema_version_is_refused():
+    data = json.loads(model.dumps(make_review()))
+    data["schema_version"] = model.SCHEMA_VERSION + 1
+    with pytest.raises(SchemaVersionError) as excinfo:
+        model.loads(json.dumps(data))
+    assert excinfo.value.exit_code == 7
+    assert "업그레이드" in str(excinfo.value)
+
+
+def test_older_schema_version_is_refused_with_pull_hint():
+    data = json.loads(model.dumps(make_review()))
+    data["schema_version"] = 0
+    with pytest.raises(SchemaVersionError, match="mrq pull"):
+        model.loads(json.dumps(data))
+
+
+def test_location_missing_path_is_rejected():
+    # asdict() 는 Location 의 path/line/line_end 를 항상 내보낸다. 손으로 쓴
+    # 파일이 이 중 하나를 빠뜨리면 model.Location(**data) 가 TypeError 로 죽는
+    # 대신, 쓰기 전에 jsonschema 가 먼저 분명한 에러로 잡아야 한다.
+    data = json.loads(model.dumps(make_review()))
+    del data["threads"][0]["location"]["path"]
+    with pytest.raises(jsonschema.ValidationError):
+        model.validate(data)
+
+
+def test_shared_sample_validates():
+    # testdata/review/ 는 세 구현이 모두 이 스키마로 검증한다.
+    sample = model.schema_path().parent.parent / "testdata" / "review" / "minimal.json"
+    model.validate(json.loads(sample.read_text(encoding="utf-8")))

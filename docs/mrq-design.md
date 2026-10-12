@@ -17,6 +17,8 @@ GitLab MR의 리뷰 코멘트를 로컬 파일로 내려받아, 에디터(Emacs/
 | `spec/testing.md` | 공통 테스트 인프라 |
 | `spec/repo-layout.md` | 리포 구조, 하위 프로젝트 툴체인, 적합성 테이블 |
 | `decisions/` | 주요 갈림길의 선택과 근거 |
+| `plans/README.md` | **구현 순서와 계획 1~5 로드맵.** 단계·FR 매핑, 범위, 시작 조건 |
+| `plans/` | 진행 중인 계획서와 잔여 항목 |
 | `schema/review.schema.json` | 기계 검증용 |
 
 ---
@@ -204,38 +206,7 @@ code block 안에서는 앵커를 인식하지 않는다. `### reply` 밖은 전
 
 ---
 
-## 6. 구현 순서
-
-한 번에 한 단계씩. 단계가 끝나면 테스트를 돌리고 멈춘다.
-
-| # | 단계 | FR | 비고 |
-|---|---|---|---|
-| 0 | 리포 스캐폴딩 — `Makefile`, `cli/`, `schema/`, `testdata/` | — | 하위 프로젝트 셋의 골격. `plugin_*`는 해당 단계에서 만든다 |
-| 1 | 상태 저장 위치, 원자적 쓰기, 락, 스키마 검증 | FR-018 | 나중에 넣으면 모든 쓰기 경로를 다시 훑어야 한다 |
-| 2 | `mrq pull` — discussions 조회, 시스템 노트 필터, 파생 필드 | FR-001, FR-002 | |
-| 3 | **재앵커링 + 테스트 12종 + 품질 게이트** | FR-003 | 품질을 좌우한다 |
-| 4 | `review.md` 렌더러 | FR-004 | |
-| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | 두 번째 위험 지점 |
-| 6 | 충돌 감지 + `--prefer` | FR-006 | |
-| 7 | `mrq status`, `mrq list` | FR-007 | |
-| 8 | `mrq reply`, `mrq state` | FR-012 | VSCode와 AI의 쓰기 경로 |
-| 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | |
-| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | |
-| 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | |
-| 12 | `--draft` 모드 | FR-013 | |
-| 13 | VSCode 확장 | FR-015 | |
-
-1번을 먼저 하는 이유는 원자적 쓰기와 저장 위치가 나중에 넣기 유독 비싼 항목이기
-때문이다. 쓰기 경로를 사후에 다시 훑어야 하고, 저장 위치를 바꾸면 이미 쌓인 리뷰
-상태가 고아가 된다.
-
-11번과 13번에서 `plugin_emacs/`와 `plugin_vscode/`를 만들 때
-`testdata/conformance/anchor.json`을 함께 채운다 — 첫 에디터 구현이 테이블의 기준이
-되고, 두 번째 구현은 그 테이블을 통과해야 한다.
-
----
-
-## 7. Future work
+## 6. Future work
 
 | 항목 | 메모 |
 |---|---|

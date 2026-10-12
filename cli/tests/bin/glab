@@ -1,0 +1,68 @@
+#!/usr/bin/env python3
+"""테스트용 가짜 glab. docs/spec/testing.md §2.
+
+환경변수:
+  MRQ_GLAB_FIXTURES  routes.json 과 응답 파일이 있는 디렉터리
+  MRQ_GLAB_LOG       호출 기록 (JSON Lines: {"argv": [...], "stdin": "..."})
+  MRQ_GLAB_FAIL_AT   N 번째 호출에서 exit 1 (1-indexed, 콤마 구분)
+
+등록되지 않은 경로는 exit 1 이다. 조용히 통과시키면 테스트가 거짓으로 녹색이 된다.
+"""
+
+from __future__ import annotations
+
+import json
+import os
+import sys
+from pathlib import Path
+
+
+def main() -> int:
+    argv = sys.argv[1:]
+
+    # `-F key=@-` 가 있을 때만 stdin 을 읽는다. 무조건 읽으면 상속된 stdin 에서 막힌다.
+    stdin = sys.stdin.read() if any(arg.endswith("=@-") for arg in argv) else ""
+
+    index = 1
+    log = os.environ.get("MRQ_GLAB_LOG")
+    if log:
+        log_path = Path(log)
+        if log_path.exists():
+            index = len(log_path.read_text(encoding="utf-8").splitlines()) + 1
+        with log_path.open("a", encoding="utf-8") as handle:
+            handle.write(
+                json.dumps({"argv": argv, "stdin": stdin}, ensure_ascii=False) + "\n"
+            )
+
+    fail_at = {
+        int(token)
+        for token in os.environ.get("MRQ_GLAB_FAIL_AT", "").split(",")
+        if token.strip()
+    }
+    if index in fail_at:
+        print(f"fake glab: 호출 {index} 에서 의도적으로 실패", file=sys.stderr)
+        return 1
+
+    if argv[:1] != ["api"] or len(argv) < 2:
+        print(f"fake glab: 지원하지 않는 호출 {argv}", file=sys.stderr)
+        return 1
+
+    method = "GET"
+    if "--method" in argv:
+        method = argv[argv.index("--method") + 1]
+    key = f"{method} {argv[1]}"
+
+    fixtures = Path(os.environ["MRQ_GLAB_FIXTURES"])
+    routes_path = fixtures / "routes.json"
+    routes = json.loads(routes_path.read_text(encoding="utf-8")) if routes_path.exists() else {}
+    if key not in routes:
+        registered = "\n  ".join(sorted(routes)) or "(없음)"
+        print(f"fake glab: 등록되지 않은 경로 — {key}\n등록된 경로:\n  {registered}", file=sys.stderr)
+        return 1
+
+    sys.stdout.write((fixtures / routes[key]).read_text(encoding="utf-8"))
+    return 0
+
+
+if __name__ == "__main__":
+    sys.exit(main())
