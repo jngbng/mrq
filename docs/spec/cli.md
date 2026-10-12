@@ -144,7 +144,7 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 ## 4. `pull` (FR-001, FR-002)
 
 ```
-1. .git/info/exclude에 /.mrq/ 등록 (없으면)
+1. .mrq/.gitignore 에 `*` 보장 (없으면)
 2. MR 결정:
    a. --mr 지정 → 그것을 쓰고 .mrq/current 갱신
    b. .mrq/current가 있고 그 review.json의 source_branch == 현재 브랜치
@@ -474,7 +474,7 @@ head_sha      ✓ abc1234 (로컬에 있음)
 draft_notes   ✓ 사용 가능
 resolve 권한  ✓ access_level 40
 storage       ✓ /home/bongya/w/proj/.mrq
-git exclude   ✓ /.mrq/ 등록됨
+git ignore    ✓ .mrq/.gitignore
 ```
 
 실패한 항목은 `✗`와 함께 다음에 할 일을 적어야 한다(MUST). 범위가 개인/단일

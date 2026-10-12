@@ -8,25 +8,50 @@ from mrq.__main__ import main
 from mrq.errors import UsageError
 
 
-def test_ensure_git_exclude_adds_once(git_repo, commit):
+def _git(repo, *args: str) -> str:
+    return subprocess.run(
+        ["git", *args], cwd=repo, capture_output=True, text=True, check=True
+    ).stdout
+
+
+def test_ensure_mrq_gitignore_adds_once(git_repo, commit):
     commit({"a.py": "x\n"})
-    store.ensure_git_exclude(git_repo)
-    store.ensure_git_exclude(git_repo)
-    exclude = (git_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-    assert exclude.splitlines().count("/.mrq/") == 1
+    store.ensure_mrq_gitignore(git_repo)
+    store.ensure_mrq_gitignore(git_repo)
+    text = (git_repo / ".mrq" / ".gitignore").read_text(encoding="utf-8")
+    assert text.splitlines().count("*") == 1
 
 
-def test_ensure_git_exclude_never_touches_gitignore(git_repo, commit):
+def test_ensure_mrq_gitignore_never_touches_repo_gitignore(git_repo, commit):
     commit({"a.py": "x\n", ".gitignore": "*.pyc\n"})
-    store.ensure_git_exclude(git_repo)
+    store.ensure_mrq_gitignore(git_repo)
     assert (git_repo / ".gitignore").read_text(encoding="utf-8") == "*.pyc\n"
 
 
-def test_ensure_git_exclude_works_in_linked_worktree(git_repo, commit, tmp_path):
+def test_mrq_dir_is_invisible_to_git(git_repo, commit):
+    """git 에 직접 물어본다 — 파일 내용이 아니라 실제 동작이 계약이다.
+
+    루트 `.gitignore` 의 역부활 패턴(`!*.json`) 을 깔아두고도 가려져야 한다.
+    같은 디렉터리의 `.gitignore` 가 상위 규칙보다 우선하기 때문이다.
+    """
+    commit({"a.py": "x\n", ".gitignore": "!*.json\n"})
+    store.ensure_mrq_gitignore(git_repo)
+    review = store.review_dir(git_repo, 7)
+    review.mkdir(parents=True, exist_ok=True)
+    (review / "review.json").write_text("{}\n", encoding="utf-8")
+    (review / "review.md").write_text("# md\n", encoding="utf-8")
+    store.write_current(git_repo, 7)
+
+    assert _git(git_repo, "status", "--porcelain", "-uall") == ""
+    _git(git_repo, "add", "-A")
+    assert ".mrq" not in _git(git_repo, "ls-files")
+
+
+def test_ensure_mrq_gitignore_works_in_linked_worktree(git_repo, commit, tmp_path):
     """linked worktree 에서 .mrq/ 가 제외되는지 확인한다.
 
-    git 은 worktree 마다 다른 --git-dir 을 주지만 info/exclude 는 --git-common-dir
-    에서만 읽으므로, git_common_dir 을 써야 한다.
+    `.mrq/` 가 worktree 루트마다 독립이므로 `.gitignore` 도 그 worktree 안에
+    생겨야 한다. common dir 분기는 존재하지 않는다.
     """
     commit({"a.py": "x\n"})
     # worktree 생성
@@ -38,8 +63,8 @@ def test_ensure_git_exclude_works_in_linked_worktree(git_repo, commit, tmp_path)
         capture_output=True,
     )
 
-    # worktree 에서 ensure_git_exclude 호출
-    store.ensure_git_exclude(worktree_root)
+    store.ensure_mrq_gitignore(worktree_root)
+    assert (worktree_root / ".mrq" / ".gitignore").is_file()
 
     # .mrq/ 디렉터리와 파일 생성
     mrq_path = store.mrq_dir(worktree_root)
@@ -128,10 +153,10 @@ def test_review_lock_is_exclusive(git_repo, commit, monkeypatch):
                 pass
 
 
-def test_reanchor_registers_git_exclude(git_repo, commit, review_json, monkeypatch):
-    # data-model.md §1 은 "모든 명령의 시작"에서 exclude 등록을 요구한다.
-    # pull 만 ensure_git_exclude 를 호출하던 시절에는 pull 없이 review.json 을
-    # 손으로 둔 상태에서 reanchor 만 돌리면 .mrq/ 가 등록되지 않았다.
+def test_reanchor_writes_mrq_gitignore(git_repo, commit, review_json, monkeypatch):
+    # data-model.md §1 은 "모든 명령의 시작"에서 ignore 보장을 요구한다.
+    # pull 만 보장하던 시절에는 pull 없이 review.json 을 손으로 둔 상태에서
+    # reanchor 만 돌리면 .mrq/ 가 git 에 그대로 노출됐다.
     commit({"a.py": "x\n"})
     review_json(git_repo, iid=1234, source_branch="feat/retry")
     store.write_current(git_repo, 1234)
@@ -139,8 +164,8 @@ def test_reanchor_registers_git_exclude(git_repo, commit, review_json, monkeypat
 
     assert main(["reanchor"]) == 0
 
-    exclude_text = (git_repo / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-    assert "/.mrq/" in exclude_text
+    ignore_text = (git_repo / ".mrq" / ".gitignore").read_text(encoding="utf-8")
+    assert "*" in ignore_text.splitlines()
 
     result = subprocess.run(
         ["git", "status", "--porcelain"], cwd=git_repo, capture_output=True, text=True, check=True

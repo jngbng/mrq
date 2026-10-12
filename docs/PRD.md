@@ -123,7 +123,7 @@ push      replies 9 · resolves 8 · skip 2
 | FR-015 | VSCode 통합 | Diagnostics + CodeLens, md 파싱 금지 | `spec/editor.md` |
 | FR-016 | 환경 진단 | `doctor`가 실패 지점을 특정 | `spec/cli.md` |
 | FR-017 | 정리 | merged/closed MR 디렉터리 제거 | `spec/cli.md` |
-| FR-018 | 상태 저장 레이아웃 | `.mrq/`, 원자적 쓰기, 락, `.git/info/exclude` 자동 등록 | `spec/data-model.md` |
+| FR-018 | 상태 저장 레이아웃 | `.mrq/`, 원자적 쓰기, 락, `.mrq/.gitignore` 자동 생성 | `spec/data-model.md` |
 | FR-019 | 브라우저 열기 | MR 또는 특정 스레드 앵커로 이동 | `spec/cli.md` |
 
 ## 6. 비기능 요구사항

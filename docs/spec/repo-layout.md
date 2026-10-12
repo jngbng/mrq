@@ -65,9 +65,9 @@ mrq/
 | `errors.py` | 종료 코드를 갖는 예외 계층 (`cli.md` §2) | `MrqError`(1), `UsageError`(1), `ParseError`(2), `ConflictError`(3), `PartialPushError`(4), `NetworkError`(5), `MrDetectionError`(6), `SchemaVersionError`(7) |
 | `cli.py` | argparse 디스패치. `_Parser`가 argparse의 exit 2를 `UsageError`로 바꾼다 | `build_parser`, `dispatch` |
 | `__main__.py` | 엔트리포인트. `MrqError`를 종료 코드로 바꾸는 **유일한** 지점 | `main(argv) -> int` |
-| `gitcmd.py` | git plumbing 래퍼. **모든** git 호출이 여기를 지난다. `-c core.quotepath=false` 기본 | `run`, `toplevel`, `git_common_dir`, `have_commit`, `has_path`, `fetch`, `show`, `diff_name_status`, `diff_u0`, `diff_u3` |
+| `gitcmd.py` | git plumbing 래퍼. **모든** git 호출이 여기를 지난다. `-c core.quotepath=false` 기본 | `run`, `toplevel`, `have_commit`, `has_path`, `fetch`, `show`, `diff_name_status`, `diff_u0`, `diff_u3` |
 | `glab.py` | `glab api` 래퍼. **모든** 네트워크 호출이 여기를 지난다 | `api(path, *, method, fields, body, paginate, check)` |
-| `store.py` | `.mrq/` 레이아웃, 원자적 쓰기, flock, git exclude 등록, 공통 진입점 | `open_review`, `ReviewContext`, `repo_root`, `mrq_dir`, `review_dir`, `review_json_path`, `review_md_path`, `ensure_git_exclude`, `read_current`, `write_current`, `clear_current`, `atomic_write_text`, `review_lock` |
+| `store.py` | `.mrq/` 레이아웃, 원자적 쓰기, flock, git ignore 보장, 공통 진입점 | `open_review`, `ReviewContext`, `repo_root`, `mrq_dir`, `review_dir`, `review_json_path`, `review_md_path`, `ensure_mrq_gitignore`, `read_current`, `write_current`, `clear_current`, `atomic_write_text`, `review_lock` |
 | `model.py` | `review.json` 데이터 클래스 + 직렬화 + 스키마 검증 | `Review`, `Thread`, `Server`, `Position`, `Anchor`, `Location`, `Local`, `Note`, `Me`, `Capabilities`, `DiffRefs`, `schema_path`, `validate`, `check_version`, `dumps`, `loads` |
 | `mr.py` | MR 탐지와 메타데이터 | `PROJECT`, `MrInfo`, `detect`, `project_info`, `diff_refs`, `whoami`, `draft_notes_available`, `current_branch` |
 | `discussions.py` | discussions 응답 → `Thread`. 시스템 노트 필터와 파생 필드 | `fetch`, `to_threads` |

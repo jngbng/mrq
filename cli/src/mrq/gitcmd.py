@@ -39,18 +39,6 @@ def toplevel(cwd: Path) -> Path:
     return Path(out.strip())
 
 
-def git_common_dir(root: Path) -> Path:
-    """clone 이 공유하는 git 디렉터리.
-
-    linked worktree 에서도 같은 값을 반환한다. `info/exclude` 를 읽으려면
-    worktree 전용 dir 이 아닌 common dir 이어야 한다.
-    """
-    out = run(["rev-parse", "--git-common-dir"], cwd=root)
-    assert out is not None
-    path = Path(out.strip())
-    return path if path.is_absolute() else root / path
-
-
 def have_commit(root: Path, sha: str) -> bool:
     return run(["cat-file", "-e", f"{sha}^{{commit}}"], cwd=root, check=False) is not None
 

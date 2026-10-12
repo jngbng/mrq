@@ -11,6 +11,7 @@
 
 ```
 <repo-root>/.mrq/
+  .gitignore               "*" — .mrq/ 전체를 git 에서 가린다
   current -> <iid>/        심링크
   <iid>/
     review.json            정본
@@ -24,17 +25,16 @@
   iid를 모르는 소비자(AI 프롬프트, 에디터)의 안정 경로다
 - 심링크 생성이 실패하면 `current`를 iid만 담은 텍스트 파일로 쓴다(MAY). 소비자는
   `current`가 디렉터리면 그대로 쓰고, 파일이면 내용을 읽어 한 단계 더 들어간다
-- `mrq`는 모든 명령의 시작에서 `.git/info/exclude`에 `/.mrq/`가 있는지 확인하고
-  없으면 추가해야 한다(MUST). `.gitignore`는 건드리지 않는다(MUST NOT) — 사용자
-  개인 도구의 항목을 팀 리포 히스토리에 넣지 않는다
-- exclude 파일의 위치는 **`git rev-parse --git-common-dir`** 이다(MUST).
-  `--git-dir`을 쓰면 안 된다(MUST NOT) — linked worktree에서 `--git-dir`은
-  worktree 전용 디렉터리(`.git/worktrees/<name>`)를 가리키고 **git은 거기의
-  `info/exclude`를 읽지 않는다.** 그대로 두면 worktree 안에서 등록이 조용히
-  무효가 되고 `.mrq/`가 `git add -A` 한 번에 커밋된다.
-
-  저장 위치(`--show-toplevel`, worktree별)와 혼동하지 말 것. 둘은 목적이 다르다 —
-  리뷰 상태는 worktree마다 독립이고, exclude는 clone 단위 설정이다.
+- `mrq`는 모든 명령의 시작에서 `.mrq/.gitignore`에 `*` 줄이 있는지 확인하고 없으면
+  추가해야 한다(MUST). `*`가 `.gitignore` 자신까지 매치하므로 `.mrq/` 전체가 git에서
+  사라진다. 리포 루트의 `.gitignore`는 건드리지 않는다(MUST NOT) — 사용자 개인 도구의
+  항목을 팀 리포 히스토리에 넣지 않는다
+- `.git/` 아래에는 쓰지 않는다(MUST NOT). `.git/`을 거부하는 샌드박스에서도 동작해야
+  하고, ignore 규칙이 상태와 같은 디렉터리에 있어야 worktree마다 독립인 `.mrq/`와
+  어긋나지 않는다 ([0007](../decisions/0007-mrq-gitignore.md))
+- 계약은 파일 내용이 아니라 git의 실제 동작이다. `.mrq/`에 파일을 둔 뒤
+  `git status --porcelain -uall`이 비어 있고, `git add -A` 후 `git ls-files`에
+  `.mrq`가 없어야 한다(MUST)
 
 ### 원자성과 락
 

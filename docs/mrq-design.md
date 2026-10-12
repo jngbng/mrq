@@ -91,13 +91,15 @@ drift를 막는 적합성 테이블은 `spec/repo-layout.md`에 있다.
 
 ```
 <repo-root>/.mrq/
+  .gitignore
   current -> <iid>/
   <iid>/{review.json, review.md, lock}
 ```
 
-리포 루트의 `.mrq/`에 둔다. `mrq`가 첫 실행에 `.git/info/exclude`에 `/.mrq/`를
-등록하므로 사용자가 할 일은 없고, `.gitignore`를 건드리지 않으므로 개인 도구의 항목이
-팀 리포 히스토리에 섞이지 않는다.
+리포 루트의 `.mrq/`에 둔다. `mrq`가 `.mrq/.gitignore`에 `*`를 쓰므로 사용자가 할 일은
+없고, 리포 루트의 `.gitignore`를 건드리지 않으므로 개인 도구의 항목이 팀 리포
+히스토리에 섞이지 않는다. `.git/` 아래에는 쓰지 않는다
+([0007](decisions/0007-mrq-gitignore.md)).
 
 `.git/` 아래가 아닌 이유와 그 대가로 수용한 `git clean` 위험은 [0005](decisions/0005-storage-location.md)에 있다.
 

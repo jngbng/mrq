@@ -54,9 +54,6 @@ testdata/       세 구현이 공유하는 테스트 데이터
   가장 빠른 길이다.
 - **discussion 객체에 thread 레벨 `resolved`/`resolvable`/`updated_at`이 없다.**
   notes에서 계산한다. `individual_note: true`인 스레드에는 답글을 달 수 없다.
-- **`.git/info/exclude`는 `--git-common-dir`에 쓴다.** `--git-dir`은 linked
-  worktree에서 git이 읽지 않는 파일을 가리켜 등록이 조용히 무효가 된다.
-  저장 위치(`--show-toplevel`, worktree별)와는 다른 경로다.
 - **`system: true` 노트는 pull에서 전량 제외한다.** 안 걸러내면 노이즈가 절반을 넘는다.
 - **resolve 권한은 `pull`에서 확인해 `status`가 사전에 알린다.** 403을 사후 에러로
   다루지 않는다.
@@ -71,7 +68,8 @@ testdata/       세 구현이 공유하는 테스트 데이터
 - `review.md`를 VSCode 확장이나 flymake 백엔드에서 파싱하지 말 것. json을 읽는다.
 - 파싱 실패 시 부분 적용하지 말 것. 전부 성공하거나 아무것도 쓰지 않는다.
   단, 에러와 경고를 구분한다 (`docs/spec/review-md.md` §7).
-- `.gitignore`를 건드리지 말 것. `.git/info/exclude`에 `/.mrq/`를 자동 등록한다.
+- 리포 루트의 `.gitignore`도 `.git/` 아래도 건드리지 말 것. `.mrq/.gitignore`에 `*`를
+  자동으로 쓴다.
 - `git remote get-url origin`을 파싱하지 말 것. `glab api`의 `:fullpath`를 쓴다.
 - 답글 본문을 CLI 인자로 넘기지 말 것. `-F body=@-`로 stdin을 쓴다.
 - 에디터에서 `review.json`을 직접 쓰지 말 것. `mrq reply`/`state`/`sync`를 호출한다.

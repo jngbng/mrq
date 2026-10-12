@@ -100,6 +100,6 @@ v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드�
 163개가 8.7초. 가장 느린 테스트가 0.51초이고 비용은 함수 스코프 `git_repo`
 픽스처(테스트당 git 서브프로세스 약 6회)가 지배한다. 성장이 테스트당 약 40ms로
 선형이므로 지금의 네 배에서 30초쯤 된다. 실제 git 저장소를 쓰는 것은 옳은 선택이고
-(`reanchoring.md` §8이 MUST로 요구하며, `info/exclude`·`git mv`·rename pathspec
+(`reanchoring.md` §8이 MUST로 요구하며, `.mrq/` 가시성·`git mv`·rename pathspec
 결함을 모두 그것이 잡았다), 60초를 넘길 때 세션 스코프 템플릿 저장소 + `cp -r`로
 바꾸면 된다. 그 전에 손댈 필요 없다.

@@ -1,4 +1,4 @@
-"""`.mrq/` 레이아웃, 원자적 쓰기, 락, git exclude 등록.
+"""`.mrq/` 레이아웃, 원자적 쓰기, 락, git ignore 보장.
 
 docs/spec/data-model.md §1. 저장 위치는 리포 루트의 `.mrq/` 이며 worktree 마다
 독립적이다 (docs/decisions/0005-storage-location.md).
@@ -16,7 +16,8 @@ from pathlib import Path
 from mrq import gitcmd
 from mrq.errors import UsageError
 
-EXCLUDE_LINE = "/.mrq/"
+GITIGNORE_LINE = "*"
+GITIGNORE_HEADER = "# mrq 가 관리하는 리뷰 상태. 커밋하지 않는다."
 LOCK_RETRIES = 5
 LOCK_INTERVAL = 1.0
 
@@ -42,21 +43,25 @@ def review_md_path(root: Path, iid: int) -> Path:
     return review_dir(root, iid) / "review.md"
 
 
-def ensure_git_exclude(root: Path) -> None:
-    """`.git/info/exclude` 에 `/.mrq/` 를 등록한다.
+def ensure_mrq_gitignore(root: Path) -> None:
+    """`.mrq/.gitignore` 에 `*` 를 보장한다 (data-model.md §1).
 
-    `.gitignore` 를 건드리지 않는다. 개인 도구의 항목을 팀 리포 히스토리에 넣지
-    않는다.
+    `*` 가 `.gitignore` 자신까지 매치하므로 `.mrq/` 전체가 git 에서 사라진다.
+    리포 루트의 `.gitignore` 는 건드리지 않는다 — 개인 도구의 항목을 팀 리포
+    히스토리에 넣지 않는다.
+
+    `.git/` 에 쓰지 않는 것이 핵심이다. 샌드박스가 `.git/` 쓰기를 거부해도
+    동작하고, ignore 규칙이 상태와 같은 디렉터리에 살아서 worktree 분기가 없다
+    (docs/decisions/0007-mrq-gitignore.md).
     """
-    # git 은 linked worktree 에서도 common dir 의 info/exclude 만 읽으므로
-    # --git-dir 이 아닌 --git-common-dir 을 써야 한다.
-    exclude = gitcmd.git_common_dir(root) / "info" / "exclude"
-    exclude.parent.mkdir(parents=True, exist_ok=True)
-    lines = exclude.read_text(encoding="utf-8").splitlines() if exclude.exists() else []
-    if any(line.strip() == EXCLUDE_LINE for line in lines):
+    path = mrq_dir(root) / ".gitignore"
+    lines = path.read_text(encoding="utf-8").splitlines() if path.is_file() else []
+    if any(line.strip() == GITIGNORE_LINE for line in lines):
         return
-    lines.append(EXCLUDE_LINE)
-    exclude.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    if not lines:
+        lines = [GITIGNORE_HEADER]
+    lines.append(GITIGNORE_LINE)
+    atomic_write_text(path, "\n".join(lines) + "\n")
 
 
 @dataclass
@@ -69,19 +74,19 @@ class ReviewContext:
 def open_review(*, require_state: bool = True) -> ReviewContext:
     """모든 명령의 공통 진입점.
 
-    `.git/info/exclude` 등록을 보장하고(data-model.md §1), 리뷰 상태를 찾는다.
+    `.mrq/.gitignore` 를 보장하고(data-model.md §1), 리뷰 상태를 찾는다.
     `require_state=True` 면 상태가 없을 때 UsageError(exit 1) 로 `mrq pull` 을
     안내한다 — 빈 결과를 성공으로 보고하지 않는다(cli.md §2).
     """
     root = repo_root()
-    ensure_git_exclude(root)
+    ensure_mrq_gitignore(root)
     iid = read_current(root)
     path = review_json_path(root, iid) if iid is not None else None
     if require_state and (path is None or not path.is_file()):
         raise UsageError("리뷰 상태가 없습니다. `mrq pull` 을 먼저 실행하세요.")
     if iid is None:
         # require_state=False 이고 아직 current 가 없는 경우 (pull 의 첫 실행).
-        # 루트와 exclude 등록만 필요하므로 iid/path 는 자리표시자다.
+        # 루트와 ignore 보장만 필요하므로 iid/path 는 자리표시자다.
         return ReviewContext(root=root, iid=0, path=mrq_dir(root) / "none")
     return ReviewContext(root=root, iid=iid, path=path)
 

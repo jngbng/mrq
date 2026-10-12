@@ -103,10 +103,10 @@ def test_pull_marks_individual_note_not_repliable(pullable):
     assert general.server.repliable is False
 
 
-def test_pull_registers_git_exclude(pullable):
+def test_pull_writes_mrq_gitignore(pullable):
     main(["pull"])
-    exclude = (pullable / ".git" / "info" / "exclude").read_text(encoding="utf-8")
-    assert "/.mrq/" in exclude
+    text = (pullable / ".mrq" / ".gitignore").read_text(encoding="utf-8")
+    assert "*" in text.splitlines()
 
 
 def test_pull_writes_current_pointer(pullable):

@@ -18,8 +18,8 @@
 .mrq/<iid>/{review.json, review.md, lock}
 ```
 
-`mrq`가 첫 실행에 `.git/info/exclude`에 `/.mrq/`를 등록한다. `.gitignore`는 건드리지
-않는다.
+`mrq`가 `.mrq/`를 git에서 가린다. 리포 루트의 `.gitignore`는 건드리지 않는다. 가리는
+수단은 [0007](0007-mrq-gitignore.md)에서 `.mrq/.gitignore`로 바뀌었다.
 
 ## 근거
 
@@ -34,9 +34,9 @@
 
 ## 수용한 위험
 
-**`git clean -fd`가 `.mrq/`를 지운다.** `.git/info/exclude`에 등록되어 있으면 `-x`가,
-등록되지 않았으면 untracked라서 `-fd`가 지운다. 잃는 것은 전송하지 않은 답글과
-`pushed_hash` 기록이며, 후자가 사라지면 재push 시 **이미 올린 답글이 중복 전송된다.**
+**`git clean -fd`가 `.mrq/`를 지운다.** ignored 상태면 `-x`가, 아직 가려지기 전이면
+untracked라서 `-fd`가 지운다. 잃는 것은 전송하지 않은 답글과 `pushed_hash` 기록이며,
+후자가 사라지면 재push 시 **이미 올린 답글이 중복 전송된다.**
 
 사용자가 `git clean -fdx`를 습관적으로 쓰지 않고 쓸 때는 의식적으로 쓴다고 판단해
 이 위험을 수용했다. 단순한 구조가 주는 이득은 매일 돌아오고 위험은 드물게 사용자가
