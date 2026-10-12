@@ -1,7 +1,8 @@
 import subprocess
 
 from mrq import anchor as anchor_mod
-from mrq import linemap, model, reanchor
+from mrq import linemap, model, reanchor, store
+from mrq.__main__ import main
 
 PAD = "".join(f"pad{i}\n" for i in range(1, 21))
 TARGET = "    resp = session.get(url)"
@@ -437,3 +438,44 @@ def test_git_mapping_result_must_pass_content_check(git_repo, commit, monkeypatc
     # 내용 검증이 실패해 문자열 탐색으로 내려가고, 거기서 올바른 줄을 찾는다.
     assert thread.location.line == 3
     assert thread.location.method == "anchor-search"
+
+
+def test_reanchor_rerenders_md(git_repo, commit, review_json, checkout, monkeypatch):
+    commit({"a.py": "x\n"})
+    checkout("feat/retry")  # review.json 의 source_branch (cli.md §2 의 브랜치 가드)
+    review_json(git_repo, iid=1234, source_branch="feat/retry")
+    store.write_current(git_repo, 1234)
+    monkeypatch.chdir(git_repo)
+
+    assert main(["reanchor"]) == 0
+
+    md = store.review_md_path(git_repo, 1234)
+    assert md.is_file()
+    assert md.read_text(encoding="utf-8").startswith("<!-- mrq:file ")
+
+
+def test_reanchor_refuses_to_write_after_the_checkout_moved(
+    git_repo, commit, review_json, checkout, monkeypatch, capsys
+):
+    """`reanchor` 도 쓰기 명령이다 (testing.md §5, cli.md §2).
+
+    `location` 이 재계산 가능하다는 것은 위로가 되지 않는다 — 다른 브랜치의 작업
+    트리로 계산한 위치와 `confidence` 가 그럴듯한 틀린 값으로 json 에 남고 md 와
+    `status` 의 품질 수치에 그대로 나오며, 그것을 덮어쓸 다음 `pull` 을 강제하는
+    장치가 없다. 에디터가 키 한 번으로 부르는 경로라 경고는 읽히지 않는다.
+    """
+    commit({"a.py": "x\n"})
+    checkout("feat/retry")
+    review_json(git_repo, iid=1234, source_branch="feat/retry")
+    store.write_current(git_repo, 1234)
+    monkeypatch.chdir(git_repo)
+    before = store.review_json_path(git_repo, 1234).read_text(encoding="utf-8")
+
+    checkout("feat/other")  # 사람이 다른 브랜치로 옮겨갔다
+
+    assert main(["reanchor"]) == 1
+
+    assert store.review_json_path(git_repo, 1234).read_text(encoding="utf-8") == before
+    assert not store.review_md_path(git_repo, 1234).exists()  # md 재렌더도 없다
+    err = capsys.readouterr().err
+    assert "feat/other" in err and "feat/retry" in err and "mrq pull" in err

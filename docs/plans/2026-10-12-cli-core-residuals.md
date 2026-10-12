@@ -1,35 +1,16 @@
-# 계획 1 잔여 항목 (계획 2 시작 전에 읽을 것)
+# 계획 1 잔여 항목 (계획 3 시작 전에 읽을 것)
 
 계획 1의 최종 브랜치 리뷰가 "나중에"로 판정한 것들이다. 계획 1 의 계획서는 작업
 완료 후 삭제됐고, 범위와 결과는 `README.md`에 있다.
 병합을 막지는 않지만, 각 항목에는 그것을 먼저 필요로 하는 계획이 적혀 있다.
 
-## 계획 2의 첫 과제로 다루면 좋은 것
+R1(`model`의 예외가 종료 코드 계약을 빠져나가는 것)과 R2(`pull`이 스키마 버전
+불일치에서 복구 못 하는 것)는 계획 2의 첫 두 과제로 해소됐다.
 
-**R1. `model.validate`/`loads`의 예외가 종료 코드 계약을 빠져나간다.**
-`jsonschema.ValidationError`와 `json.JSONDecodeError`가 `MrqError` 계층을 통과하지
-못해 파이썬 트레이스백으로 나온다. 다른 모든 모듈은 실패를 타입화된 종료 코드로
-바꾼다(`gitcmd`→`UsageError`, `glab`→`NetworkError`, `check_version`→`SchemaVersionError`).
-손으로 고친 `review.json`에 `"state": "DONE"`을 넣으면 재현된다.
-
-계획 4의 flymake 백엔드가 이 트레이스백을 사용자에게 보여주게 된다.
-`cli.md` §2의 종료 코드 표에 "review.json이 손상됐다"에 해당하는 코드가 없으므로,
-코드를 하나 정할지도 함께 결정해야 한다.
-
-**R2. `pull`이 스키마 버전 불일치에서 복구할 수 없다.**
-`mr.detect`와 `pull`이 모두 기존 `review.json`을 `model.loads`로 읽으므로
-`check_version`이 먼저 터진다. `data-model.md` §2는 하위 버전을 `pull`이
-마이그레이션한다고 적었는데, 정작 `pull`이 파일을 교체하기 전에 실패한다.
-사용자의 유일한 탈출구가 `rm -rf .mrq/`이고, 그것은 전송하지 않은 답글과
-`pushed_hash`를 파괴한다.
-
-v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드를 하나 추가하는
-순간 버전이 올라가고 그때 반드시 터진다. 상위 버전에 대한 exit 7은 유지하되
-(새 파일을 덮어쓰지 않는 것이 맞다), 하위·판독 불가 버전에서는 `local.*`를
-최선 노력으로 건져내고 경고하도록 바꿔야 한다.
-
-곁가지: `mr.detect`가 `source_branch` 문자열 하나를 읽으려고 `review.json` 전체를
-검증하고 인스턴스화한다. MR 탐지가 스키마 유효성에 묶일 이유가 없다.
+**R6~R8은 계획 2를 실제 MR로 검증하면서 나왔다** (2026-10-13,
+`gitlab.com/jngbng/mr-helper` 의 MR `!1` — 코멘트 15개, 재사용 가능한 픽스처로
+남겨 뒀다). 단위 테스트가 전부 통과하는 상태에서 나온 것들이므로, 셋 다 "테스트가
+덮지 못한 모양의 입력"이라는 공통점이 있다.
 
 ## 계획 3(`push`) 전에 반드시 다룰 것
 
@@ -48,6 +29,12 @@ v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드�
   장애를 `draft_notes: false`로 기록한다. `glab api -i/--include`가 응답 헤더를
   출력하므로 `api()`를 `(status: int, data: Any)` 형태로 바꾸면 "실패"와 "성공했지만
   본문이 비었음"도 함께 구분된다.
+- **`--input` 모드에는 `Content-Type` 을 직접 붙여야 한다** (2026-10-13 실측).
+  `glab api --input -` 만 쓰면 GitLab이 `HTTP 415 The provided content-type '' is
+  not supported` 를 돌려준다. `-H "Content-Type: application/json"` 을 함께 줘야
+  한다. 그리고 `-F "position[new_line]=15"` 식 bracket 키는 중첩 JSON으로 가지
+  않아 **GitLab이 조용히 무시한다** — 위치 코멘트를 만들려다 위치 없는 스레드를
+  만들고도 성공 응답을 받는다. 위 `query: dict` 를 넣을 때 이 둘을 같이 처리할 것.
 
 **R4. 가짜 `glab` 하네스가 페이지네이션과 상태 코드를 표현할 수 없다.**
 `cli/tests/bin/glab`은 `"<METHOD> <path>"` 키마다 응답 파일 하나를 매핑한다.
@@ -62,6 +49,62 @@ v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드�
 표시만 하는 것이다. 그 표시를 렌더링·`status`·`push`가 어떻게 다룰지가 계획 2·3의
 영역이라 미뤘다. `test_pull_drops_threads_removed_on_server`가 현재의 손실 동작을
 고정하고 있으므로 완화책이 들어오면 그 테스트가 바뀐다.
+
+**R6. 여러 줄 코멘트(`position.line_range`)가 범위의 끝에 앵커를 걸고 span을 잃는다.**
+`reanchoring.md` §5.4는 "`start`와 `end`를 각각 1~3단계로 매핑한다"를 규범으로
+요구하는데, **`line_range.start`를 읽는 코드가 없다**. `anchor.extract`는
+`position.new_line`을 앵커 줄로 쓰고 `reanchor._range_end`는 `line_range.end.new_line`만
+읽는다 — 즉 구현은 `position.new_line == line_range.start.new_line` 을 가정한다.
+
+**GitLab은 그 가정을 보장하지 않는다.** 같은 범위(14~18)에 `new_line`만 바꿔 두 번
+만들어 봤더니 보낸 값을 그대로 저장했다 — 정규화하지 않는다:
+
+| 보낸 `new_line` | 저장된 `new_line` | `line_range` | discussion |
+|---|---|---|---|
+| 18 (범위의 끝) | 18 | 14 / 18 | `63e7083a…` |
+| 14 (범위의 시작) | 14 | 14 / 18 | `985e4402…` |
+
+따라서 `new_line`은 범위의 어느 쪽이든 될 수 있고, 끝 줄로 들어온 경우 현재 구현은
+`location = {line: 18, line_end: 18}` 을 만든다 — 시작 줄을 가리키지 못하고 범위도
+비어 있다. (GitLab UI가 어느 쪽을 보내는지는 확인하지 않았다. 확인할 필요도 없다 —
+`line_range`가 있으면 그것을 읽는 것이 §5.4가 요구하는 동작이다.)
+
+실측(MR `!1`, discussion `63e7083a…`, `src/api/client.py` 14~18):
+
+```
+position.new_line  : 18
+position.line_range: start.new_line 14 / end.new_line 18
+location           : {"line": 18, "line_end": 18, "confidence": "exact", "method": "git-diff"}
+anchor.line        : '    raise RuntimeError("재시도 소진")'   ← 18행 내용
+헤더 렌더          : ## [ ] src/api/client.py:18
+```
+
+`anchor`가 끝 줄 내용을 담으므로 재앵커링은 끝 줄을 따라가고, 그 자체로는 일관되지만
+스펙과 어긋난다. 고칠 지점은 둘이다 — `anchor.extract`가 `line_range`가 있을 때
+`start`의 줄 번호를 앵커로 쓰고, `_locate`가 `start`/`end`를 각각 매핑한 뒤 §5.4의
+강등 규칙(하나라도 실패 → `start`만, `line_end: null`, `fuzzy`)을 적용해야 한다.
+계획 4·5의 에디터가 `location.line`~`line_end`로 영역을 표시하므로, 지금 상태로는
+여러 줄 지적이 한 줄로 보인다.
+
+`reanchoring.md` §8 테스트 10번(`test_multiline_range_maps_both_ends`)은 `new_line=3`
+에 `line_range` 3~4를 주므로 **구현과 같은 가정을 공유한다** — 그래서 통과한다.
+고칠 때 그 테스트도 두 모양(시작/끝) 둘 다로 늘려야 한다. MR `!1` 에 두 모양이 다
+들어 있으니 픽스처로 쓸 수 있다.
+
+**R7. 노트 시각이 UTC로 렌더된다.** GitLab은 `created_at`을 UTC로 주고 렌더러는
+기록된 오프셋 그대로 출력한다(계획 2에서 골든 테스트의 결정성을 위해 그렇게 정했다).
+결과: 07:55 KST에 달린 코멘트가 `> **@jngbng** 2026-10-12 22:55` 로 보인다. 요약 줄의
+`pulled`/`synced`는 우리가 만든 로컬 시각이라 맞게 나오므로, 같은 화면에 9시간 차이가
+나는 두 시각이 섞인다. 로컬 타임존으로 변환하고 골든 테스트는 `TZ`를 고정하는 쪽이
+맞다 (`review-md.md` §5의 인용 형식, `render._stamp`).
+
+**R8. 답글을 썼는데 상태가 `todo`면 조용히 전송되지 않는다.** `data-model.md` §4.7의
+의도대로다(`todo` → push는 아무것도 하지 않음) — 그리고 `status`의 `push replies 0`이
+그것을 알려준다. 다만 사람이 "답글을 썼으니 보내질 것"으로 읽기 쉬운 자리이므로,
+`sync`가 "답글이 있는데 상태가 `todo`입니다 — 전송되지 않습니다"를 경고로 알리는 쪽이
+낫다. 경고는 §7의 경고 목록에 한 행을 더하는 일이고 `push`의 동작은 그대로 둔다.
+계획 3에서 `push`를 만들 때 함께 결정하면 된다.
+
 
 ## 코드 모양 (다음 계획을 쉽게 만드는 것들)
 
@@ -79,8 +122,9 @@ v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드�
   `"pulled_at": "not-a-date"`가 통과한다. 세 구현이 공유하는 계약이므로 더 엄격한
   Emacs/VSCode 리더가 CLI가 쓴 것을 거부할 수 있다. `validate`에서 포맷을
   단언하든 키워드를 빼든 하나를 골라야 한다.
-- `gitcmd.run`이 공개이고 이미 한 번 우회됐다(`mr.py`가 `rev-parse --abbrev-ref HEAD`를
-  인라인으로 만든다). "모든 git 호출이 이름 붙은 감사 가능한 래퍼"라는 규율이
+- `gitcmd.run`이 공개다. 한 번 우회된 적이 있던 `rev-parse --abbrev-ref HEAD`는
+  `gitcmd.current_branch`로 옮겼지만(계획 2 최종 리뷰), 래퍼를 거치지 않을 수 있는
+  문은 그대로 열려 있다. "모든 git 호출이 이름 붙은 감사 가능한 래퍼"라는 규율이
   `reanchor`가 네트워크를 안 탄다는 것을 증명할 수 있게 해 준 바로 그 장치다.
   `_run` + 이름 붙은 래퍼를 고려할 것.
 - `discussions._to_thread`가 `updated_at` 문자열에 사전식 `max()`를 쓴다. GitLab이
@@ -93,11 +137,10 @@ v1에서는 잠복 상태지만, `additionalProperties: false` 때문에 필드�
 - `Stats.count`가 검증 없이 `setattr`을 쓴다. 지금은 도달 불가지만, 네 번째
   confidence 값이 생기면 `as_dict`가 버리는 유령 속성이 조용히 만들어진다 —
   거짓말하는 품질 게이트가 된다.
-- `--no-render`가 파싱되고 읽히지 않는다. `--all`과 달리 이유를 적은 주석이 없다.
 
 ## 테스트 스위트
 
-163개가 8.7초. 가장 느린 테스트가 0.51초이고 비용은 함수 스코프 `git_repo`
+338개가 45초. 가장 느린 테스트가 0.51초이고 비용은 함수 스코프 `git_repo`
 픽스처(테스트당 git 서브프로세스 약 6회)가 지배한다. 성장이 테스트당 약 40ms로
 선형이므로 지금의 네 배에서 30초쯤 된다. 실제 git 저장소를 쓰는 것은 옳은 선택이고
 (`reanchoring.md` §8이 MUST로 요구하며, `.mrq/` 가시성·`git mv`·rename pathspec

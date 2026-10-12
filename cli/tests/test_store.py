@@ -153,11 +153,12 @@ def test_review_lock_is_exclusive(git_repo, commit, monkeypatch):
                 pass
 
 
-def test_reanchor_writes_mrq_gitignore(git_repo, commit, review_json, monkeypatch):
+def test_reanchor_writes_mrq_gitignore(git_repo, commit, review_json, checkout, monkeypatch):
     # data-model.md §1 은 "모든 명령의 시작"에서 ignore 보장을 요구한다.
     # pull 만 보장하던 시절에는 pull 없이 review.json 을 손으로 둔 상태에서
     # reanchor 만 돌리면 .mrq/ 가 git 에 그대로 노출됐다.
     commit({"a.py": "x\n"})
+    checkout("feat/retry")  # review.json 의 source_branch (cli.md §2 의 브랜치 가드)
     review_json(git_repo, iid=1234, source_branch="feat/retry")
     store.write_current(git_repo, 1234)
     monkeypatch.chdir(git_repo)

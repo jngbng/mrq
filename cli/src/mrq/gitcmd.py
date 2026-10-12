@@ -39,6 +39,17 @@ def toplevel(cwd: Path) -> Path:
     return Path(out.strip())
 
 
+def current_branch(root: Path) -> str:
+    """체크아웃된 브랜치 이름. detached HEAD 에서는 `"HEAD"` 다.
+
+    `mr.detect`(MR 탐지)와 `store` 의 브랜치 가드가 같은 한 지점을 쓴다 —
+    브랜치를 읽는 git 호출이 둘로 갈라지면 한쪽만 고치는 일이 생긴다.
+    """
+    out = run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
+    assert out is not None
+    return out.strip()
+
+
 def have_commit(root: Path, sha: str) -> bool:
     return run(["cat-file", "-e", f"{sha}^{{commit}}"], cwd=root, check=False) is not None
 

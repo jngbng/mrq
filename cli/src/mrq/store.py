@@ -8,12 +8,13 @@ from __future__ import annotations
 
 import fcntl
 import os
+import sys
 import time
 from contextlib import contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 
-from mrq import gitcmd
+from mrq import gitcmd, model
 from mrq.errors import UsageError
 
 GITIGNORE_LINE = "*"
@@ -71,12 +72,19 @@ class ReviewContext:
     path: Path
 
 
-def open_review(*, require_state: bool = True) -> ReviewContext:
+def open_review(*, require_state: bool = True, on_branch_change: str = "ignore") -> ReviewContext:
     """모든 명령의 공통 진입점.
 
     `.mrq/.gitignore` 를 보장하고(data-model.md §1), 리뷰 상태를 찾는다.
     `require_state=True` 면 상태가 없을 때 UsageError(exit 1) 로 `mrq pull` 을
     안내한다 — 빈 결과를 성공으로 보고하지 않는다(cli.md §2).
+
+    `on_branch_change` 는 `"ignore" | "warn" | "fail"` 이다. 체크아웃이 다른
+    브랜치로 옮겨간 뒤에도 `.mrq/current` 를 그대로 믿으면 다른 MR 의 리뷰를
+    보게 된다 (testing.md §5). 읽기 명령은 경고만 하고(세션 중간에 AI 의 읽기
+    경로를 끊는 것이 낡은 것을 보여주는 것보다 나쁘다) 쓰기 명령은 멈춘다 —
+    엉뚱한 MR 에 답글을 쓰는 것이 실제 손해다. `pull` 은 자기 탐지 로직이
+    있으므로 `"ignore"` 다.
     """
     root = repo_root()
     ensure_mrq_gitignore(root)
@@ -88,7 +96,37 @@ def open_review(*, require_state: bool = True) -> ReviewContext:
         # require_state=False 이고 아직 current 가 없는 경우 (pull 의 첫 실행).
         # 루트와 ignore 보장만 필요하므로 iid/path 는 자리표시자다.
         return ReviewContext(root=root, iid=0, path=mrq_dir(root) / "none")
+    if on_branch_change != "ignore" and path is not None and path.is_file():
+        check_branch(root, iid, path, on_branch_change)
     return ReviewContext(root=root, iid=iid, path=path)
+
+
+def check_branch(root: Path, iid: int, path: Path, mode: str) -> None:
+    """저장된 `source_branch` 와 지금 체크아웃된 브랜치를 비교한다 (testing.md §5).
+
+    스키마 검증에 묶지 않는다 — 손상된 json 때문에 가드가 터지면 사용자의
+    탈출구가 사라진다. detached HEAD 는 "다른 MR 의 브랜치" 가 아니고 비교할
+    브랜치 이름도 없으므로 쓰기까지 막지 않고 경고만 한다. 막으면 커밋 하나를
+    체크아웃해 확인하던 사람이 답글을 기록할 길이 없어진다 (`--force` 가 없다).
+    """
+    stored = model.peek_source_branch(path.read_text(encoding="utf-8"))
+    current = gitcmd.current_branch(root)
+    if stored is None or stored == current:
+        return
+    if current == "HEAD":
+        print(
+            f"⚠ detached HEAD 입니다 — 지금 체크아웃이 리뷰 상태(!{iid}, 브랜치 {stored})와 "
+            "맞는지 확인할 수 없습니다.",
+            file=sys.stderr,
+        )
+        return
+    message = (
+        f"체크아웃된 브랜치는 {current} 인데 리뷰 상태는 {stored} 의 MR !{iid} 입니다. "
+        "`mrq pull` 로 현재 브랜치의 MR 을 받으세요."
+    )
+    if mode == "fail":
+        raise UsageError(f"{message} 아무것도 쓰지 않았습니다.")
+    print(f"⚠ {message}", file=sys.stderr)
 
 
 def read_current(root: Path) -> int | None:

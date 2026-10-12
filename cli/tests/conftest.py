@@ -43,6 +43,20 @@ def commit(git_repo: Path):
 
 
 @pytest.fixture
+def checkout(git_repo: Path):
+    """브랜치를 만들어 체크아웃한다.
+
+    샘플 `review.json` 의 `source_branch`(`feat/retry`)와 저장소를 맞추는 데 쓴다 —
+    명령들이 브랜치 가드를 통과해야 한다 (`docs/spec/testing.md` §5).
+    """
+
+    def _checkout(branch: str, *, new: bool = True) -> None:
+        _git(git_repo, "checkout", "-q", *(["-b"] if new else []), branch)
+
+    return _checkout
+
+
+@pytest.fixture
 def glab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
     """가짜 glab 을 PATH 앞에 꽂는다. subprocess 를 모킹하지 않는다."""
     fixtures = tmp_path / "glab-fixtures"

@@ -7,8 +7,8 @@ git 히스토리, 그리고 스펙에 남는다.
 | 계획 | 단계 | 결과물 | 상태 |
 |---|---|---|---|
 | 1 | 0~3 | `mrq pull`이 정확한 `review.json`을 만든다 | **완료** (2026-10-12, 43 커밋) |
-| 2 | 4~8 | 렌더 → 편집 → `sync` → `status`. AI가 코멘트를 처리할 수 있다 | 다음 |
-| 3 | 9, 10, 12 | `push`까지 완결된 CLI | |
+| 2 | 4~8 | 렌더 → 편집 → `sync` → `status`. AI가 코멘트를 처리할 수 있다 | **완료** (2026-10-13, 17 커밋) |
+| 3 | 9, 10, 12 | `push`까지 완결된 CLI | 다음 |
 | 4 | 11 | `plugin_emacs` | |
 | 5 | 13 | `plugin_vscode` | |
 
@@ -25,11 +25,11 @@ git 히스토리, 그리고 스펙에 남는다.
 | 1 | 상태 저장 위치, 원자적 쓰기, 락, 스키마 검증 | FR-018 | 1 | 완료 |
 | 2 | `mrq pull` — discussions 조회, 시스템 노트 필터, 파생 필드 | FR-001, FR-002 | 1 | 완료 |
 | 3 | **재앵커링 + 테스트 12종 + 품질 게이트** | FR-003 | 1 | 완료 |
-| 4 | `review.md` 렌더러 | FR-004 | 2 | |
-| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | 2 | 두 번째 위험 지점 |
-| 6 | 충돌 감지 + `--prefer` | FR-006 | 2 | |
-| 7 | `mrq status`, `mrq list` | FR-007 | 2 | |
-| 8 | `mrq reply`, `mrq state` | FR-012 | 2 | VSCode와 AI의 쓰기 경로 |
+| 4 | `review.md` 렌더러 | FR-004 | 2 | 완료 |
+| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | 2 | 완료 |
+| 6 | 충돌 감지 + `--prefer` | FR-006 | 2 | 완료 |
+| 7 | `mrq status`, `mrq list` | FR-007 | 2 | 완료 |
+| 8 | `mrq reply`, `mrq state` | FR-012 | 2 | 완료 |
 | 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | 3 | |
 | 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | 3 | |
 | 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | 4 | |
@@ -57,37 +57,19 @@ FR 정의는 `docs/PRD.md` §5, 각 FR의 규범 스펙은 그 표의 마지막 
 
 ---
 
-## 계획 2 — 편집 왕복 (4~8단계)
+## 계획 2 — 완료
 
-**결과물:** `pull` → 편집 → `sync` → `status`가 한 바퀴 돈다. 사람과 AI가
-`review.md`로 코멘트를 처리하고, 전송될 내용을 확인할 수 있다. 아직 전송은 못 한다.
+4~8단계. `pull` → `review.md` 편집 → `sync` → `status`가 한 바퀴 돈다. 사람과 AI가
+`review.md`로 코멘트를 처리하거나, `mrq reply`/`mrq state`로 md를 거치지 않고 직접
+쓸 수 있다 — 어느 경로로 쓰든 재렌더가 `v:` 해시를 함께 갱신해 거짓 충돌이 생기지
+않는다. 전송(`push`)은 아직이다. 304개 테스트.
 
-| 단계 | 내용 | FR | 스펙 |
-|---|---|---|---|
-| 4 | `review.md` 렌더러 | FR-004 | `spec/review-md.md` §1~5 |
-| 5 | `mrq sync` 파서 + 라운드트립 property 테스트 | FR-005 | `spec/review-md.md` §6~8 |
-| 6 | 충돌 감지 + `sync --prefer` | FR-006 | `spec/data-model.md` §5 |
-| 7 | `mrq status`, `mrq list` | FR-007 | `spec/cli.md` §7, §8 |
-| 8 | `mrq reply`, `mrq state` | FR-012 | `spec/cli.md` §10 |
+구현된 FR: FR-004(렌더), FR-005(파싱), FR-006(충돌 감지), FR-007(status·list),
+FR-012(reply·state).
 
-**시작 조건과 첫 과제.** 계획 1의 `pull`은 json만 쓴다. `--render`를 주면
-"렌더러는 아직 구현되지 않았습니다"를 stderr에 내고 exit 1하며, `--all`은 파싱만
-되고 아무 일도 하지 않는다. **계획 2의 첫 과제가 렌더러를 넣고 그 기본값을
-뒤집는 것이다** — `--render`가 동작하게 되고 `--all`이 의미를 갖는다.
-
-그 전에 잔여 항목 R1·R2를 처리하는 것이 좋다 (`model`의 예외가 종료 코드 계약을
-빠져나가는 것, `pull`이 스키마 버전 불일치에서 복구 못 하는 것). 둘 다 계획 2가
-건드리는 코드 경로이고, R2는 `additionalProperties: false` 때문에 필드를 하나
-추가하는 순간 터진다.
-
-**가장 위험한 부분이 5단계다.** `review.md`는 사람과 AI 모두의 쓰기 면이므로
-파서가 임의의 생성된 마크다운을 견뎌야 한다. `spec/review-md.md` §8이 요구하는
-property 테스트(표, 중첩 펜스, 수평선, 앵커 문법 인용, CRLF)를 가볍게 넘기지 말 것.
-라운드트립 성질은 `render(parse(render(j))) == render(j)` 바이트 일치다.
-
-**잊기 쉬운 것:** 전송하지 않은 작업이 있는 스레드는 서버에서 resolve됐어도
-`--all` 없이 렌더해야 한다(`spec/review-md.md` §5). 동료가 내 스레드를 먼저
-resolve했을 때 내 답글이 사라지면 안 된다.
+**잔여 항목 R3·R4·R5는 `2026-10-12-cli-core-residuals.md`에 있다.** (R1·R2는 이
+계획의 첫 두 과제로 해소됐다.) 각 항목에 그것을 먼저 필요로 하는 계획이 적혀
+있다. 계획 3을 시작하기 전에 읽을 것.
 
 ---
 

@@ -22,14 +22,41 @@ def build_parser() -> argparse.ArgumentParser:
 
     pull = sub.add_parser("pull", help="GitLab 에서 코멘트를 받아 review.json 을 쓴다")
     pull.add_argument("--mr", type=int, default=None, help="MR iid 를 직접 지정한다")
-    # --all 은 렌더링에만 영향을 준다. review.json 은 항상 모든 스레드를 담으므로
-    # 렌더러가 들어오는 계획 2 까지는 받아만 두고 아무 일도 하지 않는다.
     pull.add_argument("--all", action="store_true", help="resolve 된 스레드도 렌더한다")
     pull.add_argument("--render", action="store_true", help="review.md 만 다시 그린다")
     pull.add_argument("--no-render", action="store_true", help="review.md 를 그리지 않는다")
 
     reanchor = sub.add_parser("reanchor", help="위치만 다시 계산한다 (네트워크 없음)")
     reanchor.add_argument("--json", action="store_true")
+
+    sync = sub.add_parser("sync", help="review.md 를 json 에 반영하고 재앵커링한다")
+    sync.add_argument("--json", action="store_true")
+    sync.add_argument("--prefer", choices=["md", "json"], default=None)
+    sync.add_argument(
+        "--thread", action="append", default=None, help="--prefer 를 적용할 스레드 (반복 가능)"
+    )
+
+    status = sub.add_parser("status", help="전송 직전 검토면을 보여준다")
+    status.add_argument("--json", action="store_true")
+
+    listing = sub.add_parser("list", help="스레드 목록 (AI 에이전트의 읽기 경로)")
+    listing.add_argument("--json", action="store_true")
+    listing.add_argument("--all", action="store_true", help="서버에서 resolve 된 것도 포함한다")
+    listing.add_argument("--state", choices=["todo", "done", "replied", "skipped"], default=None)
+    listing.add_argument("--confidence", choices=["exact", "fuzzy", "stale"], default=None)
+
+    reply = sub.add_parser("reply", help="스레드에 답글을 기록한다 (전송은 push)")
+    reply.add_argument("thread")
+    # 둘을 함께 주면 조용히 -m 이 이겼다 — 어느 본문이 기록됐는지 모르는 채
+    # 스크립트가 지나간다. 배타 그룹이 exit 1 로 끊는다.
+    body = reply.add_mutually_exclusive_group()
+    body.add_argument("-m", "--message", default=None)
+    body.add_argument("-F", "--file", default=None, help="파일 또는 `-` (stdin)")
+    reply.add_argument("--state", choices=["todo", "done", "replied", "skipped"], default=None)
+
+    state = sub.add_parser("state", help="스레드의 로컬 상태를 바꾼다")
+    state.add_argument("thread")
+    state.add_argument("state", choices=["todo", "done", "replied", "skipped"])
 
     return parser
 
@@ -39,8 +66,21 @@ def dispatch(argv: list[str]) -> int:
     if args.command is None:
         raise UsageError("명령을 지정하세요. `mrq --help` 를 보세요.")
 
+    from mrq.commands import listing as listing_command
     from mrq.commands import pull as pull_command
     from mrq.commands import reanchor as reanchor_command
+    from mrq.commands import reply as reply_command
+    from mrq.commands import state as state_command
+    from mrq.commands import status as status_command
+    from mrq.commands import sync as sync_command
 
-    handlers = {"pull": pull_command.run, "reanchor": reanchor_command.run}
+    handlers = {
+        "pull": pull_command.run,
+        "reanchor": reanchor_command.run,
+        "sync": sync_command.run,
+        "status": status_command.run,
+        "list": listing_command.run,
+        "reply": reply_command.run,
+        "state": state_command.run,
+    }
     return handlers[args.command](args)

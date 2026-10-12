@@ -20,7 +20,10 @@
 충돌이 하나라도 있으면 아무것도 쓰지 않고 exit 3으로 끝낸다.
 
 판정에는 `rendered_at`, `local.touched_at`/`touched_by`, 그리고 `review.md`의 앵커
-주석에 적힌 렌더 시점 상태 해시(`v:`)를 쓴다.
+주석에 적힌 렌더 시점 상태 해시(`v:`)를 쓴다. (`rendered_at`/`touched_at`의 시각
+비교로 "렌더 후 json 변경"을 판정하는 부분은 [0008](0008-conflict-signal-v-hash-not-timestamp.md)에서
+`v` 핑거프린트 비교로 바뀌었다 — 스레드 단위 판정과 아래 여섯 행의 결과 자체는
+그대로다.)
 
 ## 결과
 

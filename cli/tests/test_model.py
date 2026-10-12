@@ -4,7 +4,7 @@ import jsonschema
 import pytest
 
 from mrq import model
-from mrq.errors import SchemaVersionError
+from mrq.errors import CorruptStateError, SchemaVersionError
 
 
 def make_review(**overrides) -> model.Review:
@@ -137,3 +137,116 @@ def test_shared_sample_validates():
     # testdata/review/ 는 세 구현이 모두 이 스키마로 검증한다.
     sample = model.schema_path().parent.parent / "testdata" / "review" / "minimal.json"
     model.validate(json.loads(sample.read_text(encoding="utf-8")))
+
+
+def test_loads_rejects_invalid_enum_as_mrq_error():
+    # 손으로 고친 review.json 에 "state": "DONE" 을 넣으면 재현된다.
+    text = (model.schema_path().parent.parent / "testdata" / "review" / "minimal.json").read_text(
+        encoding="utf-8"
+    )
+    broken = text.replace('"state": "todo"', '"state": "DONE"', 1)
+    with pytest.raises(CorruptStateError) as exc:
+        model.loads(broken)
+    assert exc.value.exit_code == 1
+    assert "review.json" in str(exc.value)
+
+
+def test_loads_rejects_malformed_json_as_mrq_error():
+    with pytest.raises(CorruptStateError):
+        model.loads("{not json")
+
+
+def _minimal_text() -> str:
+    return (model.schema_path().parent.parent / "testdata" / "review" / "minimal.json").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_peek_source_branch_skips_validation():
+    broken = _minimal_text().replace('"state": "todo"', '"state": "DONE"', 1)
+    assert model.peek_source_branch(broken) == "feat/retry"
+
+
+def test_peek_source_branch_returns_none_on_garbage():
+    assert model.peek_source_branch("{not json") is None
+
+
+def test_read_previous_keeps_local_on_current_version():
+    text = _minimal_text().replace('"reply": ""', '"reply": "보존되어야 한다"', 1)
+    previous, warnings = model.read_previous(text)
+    local, anchor = previous["a1b2c3d4e5f6"]
+    assert local.reply == "보존되어야 한다"
+    assert anchor is not None and anchor.hunk is not None
+    assert warnings == []
+
+
+def test_read_previous_salvages_local_from_older_version():
+    text = _minimal_text().replace('"schema_version": 1', '"schema_version": 0', 1)
+    text = text.replace('"reply": ""', '"reply": "구버전에서도 건져야 한다"', 1)
+    previous, warnings = model.read_previous(text)
+    assert previous["a1b2c3d4e5f6"][0].reply == "구버전에서도 건져야 한다"
+    assert any("schema_version" in w for w in warnings)
+
+
+def test_read_previous_salvages_local_from_schema_violation():
+    text = _minimal_text().replace('"reply": ""', '"reply": "건져야 한다"', 1)
+    text = text.replace('"state": "todo"', '"state": "DONE"', 1)
+    previous, warnings = model.read_previous(text)
+    # 해석 불가한 state 는 버리고 기본값으로 떨어뜨리되 reply 는 살린다.
+    assert previous["a1b2c3d4e5f6"][0].reply == "건져야 한다"
+    assert previous["a1b2c3d4e5f6"][0].state == "todo"
+    assert warnings != []
+
+
+def test_read_previous_refuses_newer_version():
+    text = _minimal_text().replace('"schema_version": 1', '"schema_version": 99', 1)
+    with pytest.raises(SchemaVersionError) as exc:
+        model.read_previous(text)
+    assert exc.value.exit_code == 7
+
+
+def test_read_previous_on_garbage_returns_empty_with_warning():
+    previous, warnings = model.read_previous("{not json")
+    assert previous == {}
+    assert warnings != []
+
+
+def test_read_previous_salvage_keeps_valid_push_error_and_pushed_hash():
+    # 다른 필드(state) 하나를 깨서 _salvage 경로를 타게 하되, push_error 와
+    # pushed_hash 자체는 유효한 값을 넣어 살아남는지 확인한다 — reply/state 만
+    # 검사하던 기존 테스트들의 사각지대.
+    text = _minimal_text().replace('"state": "todo"', '"state": "DONE"', 1)
+    text = text.replace(
+        '"push_error": null',
+        '"push_error": {"op": "reply", "reason": "network", "retryable": true, '
+        '"at": "2026-10-05T10:00:00+09:00"}',
+        1,
+    )
+    text = text.replace('"pushed_hash": null', '"pushed_hash": "deadbeef"', 1)
+    previous, warnings = model.read_previous(text)
+    local, _ = previous["a1b2c3d4e5f6"]
+    assert local.pushed_hash == "deadbeef"
+    assert local.push_error == {
+        "op": "reply",
+        "reason": "network",
+        "retryable": True,
+        "at": "2026-10-05T10:00:00+09:00",
+    }
+    assert not any("push_error" in w for w in warnings)
+
+
+def test_read_previous_drops_invalid_push_error_but_dumps_still_succeeds():
+    text = _minimal_text().replace('"state": "todo"', '"state": "DONE"', 1)
+    text = text.replace('"push_error": null', '"push_error": {"bogus": "shape"}', 1)
+    previous, warnings = model.read_previous(text)
+    local, anchor = previous["a1b2c3d4e5f6"]
+    assert local.push_error is None
+    assert any("push_error" in w for w in warnings)
+
+    review = make_review()
+    review.threads[0].local = local
+    review.threads[0].anchor = anchor
+    # model.dumps 는 검증 실패를 감싸지 않는다 — 여기서 터지면 살려낸 push_error
+    # 가 스키마를 어긴 채로 넘어갔다는 뜻이다.
+    roundtripped = model.loads(model.dumps(review))
+    assert roundtripped.threads[0].local.push_error is None

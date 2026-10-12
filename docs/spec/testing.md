@@ -128,7 +128,11 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | 다른 MR의 `review.md`를 `sync` | exit 1, 아무것도 쓰지 않음 |
 | `mr_state == merged`에 `push` | 확인 요구. `--force`로 진행 |
 | `current`가 가리키는 MR을 `clean` | `current`도 제거되어 끊어진 심링크가 없다 |
-| `pull` 후 브랜치 변경 → `status` | `current`를 재탐지하거나 명확히 실패 |
+| `pull` 후 브랜치 변경 → `status`/`list` | 두 브랜치 이름과 `mrq pull` 안내를 stderr로 경고. 종료 코드는 그대로 (읽기 경로를 끊지 않는다) |
+| `pull` 후 브랜치 변경 → `sync`/`reply`/`state` | exit 1, **아무것도 쓰지 않음**. 엉뚱한 MR에 답글을 남기지 않는다 (`cli.md` §2) |
+| `pull` 후 브랜치 변경 → `reanchor` | exit 1, **아무것도 쓰지 않음**. 다른 브랜치의 작업 트리로 계산한 `location`/`confidence`가 그럴듯한 틀린 값으로 남지 않는다 |
+| `reply -m ""` 또는 빈 stdin | exit 1. 미전송 답글이 빈 본문으로 덮이지 않는다 |
+| 답글이 코드 펜스를 닫지 않아 다음 스레드 블록이 삼켜짐 | exit 2, 아무것도 쓰지 않음. 삼킨 앵커 id를 보고한다 (`review-md.md` §7) |
 
 ---
 
@@ -161,7 +165,7 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | 락 | 두 프로세스가 동시에 `sync`할 때 직렬화되는지 |
 | 적합성 | 세 구현이 `testdata/conformance/anchor.json`을 통과하는지 |
 | 상태 부재 | `.mrq/`가 없을 때 `pull`/`doctor` 외 전부 exit 1 |
-| `mrq:file` 검증 | 다른 iid의 `review.md`를 `sync`하면 exit 1 |
+| `mrq:file` 검증 | 다른 iid의 `review.md`를 `sync`하면 exit 1. 주석이 아예 없으면 exit 2 (검증할 근거가 없다) |
 
 `review.json` 스키마 검증을 모든 쓰기 경로 뒤에 거는 것이 중요하다 — 스펙과 구현이
 갈라지는 것을 막는 가장 싼 장치다.

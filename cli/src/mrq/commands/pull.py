@@ -2,20 +2,14 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import sys
 
-from mrq import SCHEMA_VERSION, anchor, discussions, model, mr, reanchor, store
-
-
-def _now() -> str:
-    return dt.datetime.now().astimezone().isoformat(timespec="seconds")
+from mrq import SCHEMA_VERSION, anchor, discussions, model, mr, reanchor, store, surface
 
 
 def run(args) -> int:
     if args.render:
-        print("렌더러는 아직 구현되지 않았습니다 (계획 2).", file=sys.stderr)
-        return 1
+        return _render_only(args)
 
     root = store.open_review(require_state=False).root
 
@@ -27,7 +21,9 @@ def run(args) -> int:
     threads = discussions.to_threads(discussions.fetch(info.iid), username)
 
     with store.review_lock(root, info.iid):
-        previous = _previous_state(root, info.iid)
+        previous, previous_warnings = _previous(root, info.iid)
+        for warning in previous_warnings:
+            print(f"⚠ {warning}", file=sys.stderr)
         have_git = reanchor.ensure_commits(root, info.iid, info.source_branch, diff_refs)
         if not have_git:
             print(
@@ -63,12 +59,16 @@ def run(args) -> int:
             diff_refs=diff_refs,
             me=model.Me(id=user_id, username=username, can_resolve=can_resolve),
             capabilities=model.Capabilities(draft_notes=draft_notes),
-            pulled_at=_now(),
-            rendered_at=None,
+            pulled_at=surface.now(),
+            # 이전 값을 이어받는다. `--no-render` 면 md 는 디스크에 그대로
+            # 남아 있는데 `rendered_at` 만 None 이 되어 `status` 가 `synced -`
+            # 를 찍고 "md 가 없다" 처럼 보인다. 렌더하는 경우에는
+            # `surface.write` 가 즉시 now() 로 덮으므로 영향이 없다.
+            rendered_at=_previous_rendered_at(root, info.iid),
             threads=threads,
         )
         stats = reanchor.reanchor_all(root, review, have_git=have_git)
-        store.atomic_write_text(store.review_json_path(root, info.iid), model.dumps(review))
+        surface.write(root, review, include_resolved=args.all, md=not args.no_render)
         store.write_current(root, info.iid)
 
     unresolved = sum(1 for t in threads if not t.server.resolved)
@@ -77,8 +77,10 @@ def run(args) -> int:
     return 0
 
 
-def _previous_state(root, iid: int) -> dict[str, tuple[model.Local, model.Anchor | None]]:
-    """기존 local.* 와 anchor 를 보존한다.
+def _previous(
+    root, iid: int
+) -> tuple[dict[str, tuple[model.Local, model.Anchor | None]], list[str]]:
+    """기존 local.* 와 anchor 를 보존한다 (data-model.md §6).
 
     local.* 를 덮어쓰면 전송하지 않은 답글이 사라진다. anchor 는 head_sha 를
     확보하지 못해 이번 pull 에서 추출에 실패했을 때 되돌릴 값으로 쓴다 — 그냥
@@ -87,6 +89,27 @@ def _previous_state(root, iid: int) -> dict[str, tuple[model.Local, model.Anchor
     """
     path = store.review_json_path(root, iid)
     if not path.is_file():
-        return {}
-    previous = model.loads(path.read_text(encoding="utf-8"))
-    return {thread.id: (thread.local, thread.anchor) for thread in previous.threads}
+        return {}, []
+    return model.read_previous(path.read_text(encoding="utf-8"))
+
+
+def _previous_rendered_at(root, iid: int) -> str | None:
+    """직전 `rendered_at`. 스키마 검증에 묶지 않는다 (`model.peek_*` 와 같은 이유)."""
+    path = store.review_json_path(root, iid)
+    if not path.is_file():
+        return None
+    return model.peek_rendered_at(path.read_text(encoding="utf-8"))
+
+
+def _render_only(args) -> int:
+    """`--render` — md 만 다시 그린다. 네트워크를 쓰지 않는다 (cli.md §4).
+
+    md 가 날아간 경우의 복구 경로다. `--all` 과 함께 쓰면 서버에서 resolve 된
+    스레드까지 전부 볼 수 있다.
+    """
+    context = store.open_review()
+    with store.review_lock(context.root, context.iid):
+        review = model.loads(context.path.read_text(encoding="utf-8"))
+        surface.write(context.root, review, include_resolved=args.all)
+    print(f"rendered: {store.review_md_path(context.root, context.iid)}")
+    return 0

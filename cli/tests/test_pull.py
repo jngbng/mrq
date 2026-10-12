@@ -174,9 +174,56 @@ def test_pull_keeps_previous_anchor_when_head_unavailable(pullable, glab):
     assert after.location.confidence != "stale"
 
 
-def test_pull_render_is_not_implemented_yet(pullable, capsys):
+def test_pull_renders_md_by_default(pullable):
+    assert main(["pull"]) == 0
+    text = store.review_md_path(pullable, 1234).read_text(encoding="utf-8")
+    assert text.startswith("<!-- mrq:file schema=1 iid=1234 head=")
+    assert read_review(pullable).rendered_at is not None
+
+
+def test_pull_no_render_leaves_md_absent_and_rendered_at_null(pullable):
+    # 처음부터 md 가 없었던 경우 — 이어받을 값도 없으므로 null 이다.
+    assert main(["pull", "--no-render"]) == 0
+    assert not store.review_md_path(pullable, 1234).exists()
+    assert read_review(pullable).rendered_at is None
+
+
+def test_pull_no_render_keeps_the_existing_rendered_at(pullable):
+    # md 가 디스크에 그대로 있는데 `rendered_at` 만 null 로 돌아가면
+    # `status` 가 `synced -` 를 찍어 편집면이 없는 것처럼 보인다.
+    assert main(["pull"]) == 0
+    rendered_at = read_review(pullable).rendered_at
+    assert rendered_at is not None
+
+    assert main(["pull", "--no-render"]) == 0
+
+    assert store.review_md_path(pullable, 1234).is_file()  # md 는 그대로다
+    assert read_review(pullable).rendered_at == rendered_at
+
+
+def test_pull_render_only_touches_no_network(pullable, glab):
+    assert main(["pull"]) == 0
+    store.review_md_path(pullable, 1234).unlink()
+    before = len(glab.calls())
+
+    assert main(["pull", "--render"]) == 0
+
+    assert len(glab.calls()) == before
+    assert store.review_md_path(pullable, 1234).is_file()
+
+
+def test_pull_render_all_includes_server_resolved_threads(pullable):
+    assert main(["pull"]) == 0
+    default_md = store.review_md_path(pullable, 1234).read_text(encoding="utf-8")
+    assert main(["pull", "--render", "--all"]) == 0
+    all_md = store.review_md_path(pullable, 1234).read_text(encoding="utf-8")
+    assert all_md.count("<!-- mrq:") > default_md.count("<!-- mrq:")
+
+
+def test_pull_render_without_state_guides_to_pull(git_repo, commit, monkeypatch):
+    commit({"a.py": "x\n"})
+    monkeypatch.chdir(git_repo)
     assert main(["pull", "--render"]) == 1
-    assert "렌더러" in capsys.readouterr().err
 
 
 def test_reanchor_requires_pull_first(git_repo, commit, monkeypatch, capsys):
@@ -229,3 +276,47 @@ def test_reanchor_never_fetches(pullable, monkeypatch, capsys):
     monkeypatch.setattr("mrq.gitcmd.fetch", boom)
     capsys.readouterr()
     assert main(["reanchor"]) == 0
+
+
+def test_pull_recovers_from_older_schema_version(pullable, capsys):
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('"schema_version": 1', '"schema_version": 0', 1)
+    text = text.replace('"reply": ""', '"reply": "전송 전 답글"', 1)
+    path.write_text(text, encoding="utf-8")
+
+    assert main(["pull"]) == 0
+    review = read_review(pullable)
+    assert any(t.local.reply == "전송 전 답글" for t in review.threads)
+    assert "schema_version" in capsys.readouterr().err
+
+
+def test_pull_refuses_newer_schema_version(pullable):
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    path.write_text(
+        path.read_text(encoding="utf-8").replace('"schema_version": 1', '"schema_version": 99', 1),
+        encoding="utf-8",
+    )
+    assert main(["pull"]) == 7
+
+
+def test_pull_recovers_from_corrupt_json(pullable, capsys):
+    assert main(["pull"]) == 0
+    store.review_json_path(pullable, 1234).write_text("{not json", encoding="utf-8")
+    assert main(["pull"]) == 0
+    assert len(read_review(pullable).threads) == 7
+
+
+def test_pull_recovers_from_malformed_push_error(pullable, capsys):
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    text = path.read_text(encoding="utf-8")
+    text = text.replace('"push_error": null', '"push_error": {"bogus": "shape"}', 1)
+    path.write_text(text, encoding="utf-8")
+
+    # dumps 가 검증 실패를 감싸지 않으므로, 살려낸 push_error 가 스키마를
+    # 어긴 채로 넘어가면 여기서 트레이스백으로 죽는다 (exit 0 이 아니게 된다).
+    assert main(["pull"]) == 0
+    assert "push_error" in capsys.readouterr().err

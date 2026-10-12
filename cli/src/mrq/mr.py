@@ -44,26 +44,20 @@ def _fetch(iid: int) -> MrInfo:
     return _to_info(data)
 
 
-def current_branch(root: Path) -> str:
-    out = gitcmd.run(["rev-parse", "--abbrev-ref", "HEAD"], cwd=root)
-    assert out is not None
-    return out.strip()
-
-
 def detect(root: Path, explicit_iid: int | None = None) -> MrInfo:
     if explicit_iid is not None:
         return _fetch(explicit_iid)
 
-    branch = current_branch(root)
+    branch = gitcmd.current_branch(root)
 
     cached = store.read_current(root)
     if cached is not None:
         path = store.review_json_path(root, cached)
         if path.is_file():
-            review = model.loads(path.read_text(encoding="utf-8"))
             # source_branch 를 확인해야 한다. 브랜치를 바꿨는데 current 를 그대로
-            # 쓰면 다른 MR 의 상태를 보게 된다.
-            if review.source_branch == branch:
+            # 쓰면 다른 MR 의 상태를 보게 된다. 스키마 유효성에 묶지 않는다 —
+            # 손상된 json 때문에 pull 이 시작도 못 하면 탈출구가 rm -rf 뿐이다.
+            if model.peek_source_branch(path.read_text(encoding="utf-8")) == branch:
                 return _fetch(cached)
 
     found = glab.api(f"{PROJECT}/merge_requests?source_branch={branch}&state=opened&per_page=100")

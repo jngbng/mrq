@@ -64,10 +64,35 @@ md와 `v:` 해시가 함께 갱신되므로, 사람이 그 뒤에 파일을 열�
 2와 3을 나누는 이유는 에디터가 전혀 다른 UI를 띄워야 하기 때문이다 — 전자는 "md를
 고쳐라", 후자는 "어느 쪽을 채택할지 고르라".
 
+`review.json`이 손상된 경우(JSON 문법 오류, 스키마 위반)는 **1**이다 — 전용 코드를
+두지 않는다. `editor.md`는 exit 2와 3만 분기하므로 소비자가 생길 때 올린다.
+`model.loads`가 `CorruptStateError`로 바꿔 메시지에 `mrq pull`을 안내한다.
+
 ### 상태가 없을 때
 
 `.mrq/current`가 없으면 `pull`과 `doctor`를 제외한 모든 명령은 **exit 1**과 함께
 `mrq pull`을 안내해야 한다(MUST). 빈 결과를 성공으로 보고하면 안 된다(MUST NOT).
+
+### 체크아웃이 다른 브랜치로 옮겨갔을 때
+
+`.mrq/current`를 무조건 믿으면 `git switch` 뒤에 다른 MR의 리뷰를 보게 된다. 저장된
+`source_branch`와 현재 브랜치를 비교해 **읽기는 경고, 쓰기는 거부**해야 한다(MUST).
+
+| 명령 | 동작 |
+|---|---|
+| `status` `list` | 두 브랜치 이름과 `mrq pull` 안내를 stderr로 경고. 종료 코드는 그대로 |
+| `sync` `reply` `state` `reanchor` | **exit 1**, 아무것도 쓰지 않음 |
+| `pull` | 자체 탐지(§4 2단계)가 처리하므로 검사하지 않는다 |
+
+읽기를 끊지 않는 이유는 세션 중간에 AI의 읽기 경로를 막는 것이 낡은 상태를 보여주는
+것보다 나쁘기 때문이고, 쓰기를 막는 이유는 엉뚱한 MR에 답글을 남기는 것이 실제
+손해이기 때문이다. `reanchor`도 쓰기다 — `location`이 재계산 가능하다는 것은 위로가
+되지 않는다. 다른 브랜치의 작업 트리로 계산한 위치와 `confidence`가 그럴듯한 틀린
+값으로 json에 남아 md와 `status`의 품질 수치에 그대로 나오며, 그것을 덮어쓸 다음
+`pull`을 강제하는 장치가 없다. 에디터가 키 한 번으로 부르는 경로라(`editor.md` §3.2)
+경고는 읽히지 않고, 어긋난 브랜치에서 `reanchor`를 돌리는 것이 유용한 워크플로도 없다. detached HEAD는 비교할 브랜치 이름이 없으므로 "확인할 수 없음"
+경고만 내고 쓰기를 막지 않는다 — 커밋 하나를 체크아웃해 확인하던 사람에게 우회로가
+없어진다.
 
 ---
 
@@ -208,6 +233,15 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 
 ### `sync --json`
 
+페이로드는 **exit 0 · 2 · 3에 대해서만** 정의된다. exit 1(사용법·다른 MR의 md·
+브랜치 불일치)과 exit 7(스키마 버전)은 stderr로만 보고한다 — 그 실패들은 리뷰
+내용이 아니라 호출 자체가 틀린 경우이고, 소비자가 분기할 것은 종료 코드다.
+
+경고와 에러는 `--json`일 때도 **stderr로 함께** 출력한다(MUST). stdout이 순수 JSON
+이기만 하면 §2를 지키는 것이고, 페이로드에만 담으면 사람이 터미널에서 `--json`을
+돌렸을 때 아무 메시지도 못 보는 경로가 생긴다. 충돌은 exit 3 전용 UI가 받으므로
+`--json`에서는 페이로드로만 보낸다.
+
 exit 0일 때:
 
 ```jsonc
@@ -266,6 +300,11 @@ f6e5d4c3  [~]  src/api/legacy.py:1    @park   `stale`  이건 의도된 동작�
 
 `--state`와 `--confidence`로 거른다. `--all`은 서버에서 resolve된 것도 포함한다.
 
+`--all` 없는 기본 보기는 `review-md.md` §5의 예외를 그대로 따른다(MUST) — 서버에서
+resolve된 스레드라도 전송하지 않은 작업(`local.reply`가 비어 있지 않거나
+`local.state != todo`)이 있으면 보여야 한다. 사람이 보는 `review.md`와 AI가 읽는
+`list`가 서로 다른 집합을 보면 안 되기 때문이다.
+
 ### `list --json`
 
 `review.json`의 `threads[]`를 **그대로** 내보낸다(MUST). 필드를 가공하거나 줄이지
@@ -288,13 +327,23 @@ head abc1234 · pulled 09:12 · synced 09:40
 threads   15 · unresolved 11 · resolved-on-server 4
 local     done 8 · replied 3 · skipped 1 · todo 3
 anchors   exact 12 · fuzzy 2 · stale 1
-push      replies 9 · resolves 8 · skip 2
-          ⚠ f6e5d4c3 서버에서 변경됨 (pull 이후) — 건너뜀, --force로 무시
+push      replies 9 · resolves 8 · skip 1
           ⚠ 7766ccdd 개별 노트라 답글 전송 불가
 ```
 
 `push` 블록이 **전송 직전 검토면**이다. 30분 예산에서 사용자가 마지막으로 보는
 화면이며, "9건 답글 / 8건 resolve"가 기대와 맞는지 확인하는 것으로 충분해야 한다.
+`skip`은 전송 대상이지만 **로컬에서 이미 보낼 수 없다고 아는** 스레드의 수다 —
+`no-reply`와 `not-resolvable`이 전부다.
+
+`status`는 **오프라인에서 계산할 수 있는 것만** 보고한다(MUST). "pull 이후 서버에서
+바뀌었는가"는 네트워크 없이 답할 수 없으므로(§1) 여기서 다루지 않는다 — `server.*`는
+`pulled_at`을 기록한 같은 스냅샷이 쓰기 때문에 `server.updated_at > pulled_at`은
+구조적으로 거짓이고, 클라이언트 시계가 서버보다 뒤처지면 거짓 참이 되어 보낼 답글을
+검토면에서 지워 버린다. 이 판정은 `push`의 재조회 단계(§9 2단계)가 한다.
+
+`threads`/`local`/`anchors`의 수는 `--all` 같은 보기 플래그와 무관하게 `review.json`의
+**모든 스레드**를 센다(`review-md.md` §5와 같은 범위).
 
 `me.can_resolve == false`일 때는 push 전에 미리 알려야 한다(MUST).
 
@@ -316,13 +365,13 @@ push      replies 9 · resolves 0
   "anchors": { "exact": 12, "fuzzy": 2, "stale": 1 },
   "push":    { "replies": 9, "resolves": 8, "skip": 2 },
   "warnings": [
-    { "thread": "f6e5d4c3", "reason": "server-changed" },
     { "thread": "7766ccdd", "reason": "no-reply" }
   ] }
 ```
 
-`warnings[].reason`은 열거값이다 — `server-changed`, `no-reply`, `not-resolvable`,
+`warnings[].reason`은 열거값이다 — `no-reply`, `not-resolvable`,
 `no-resolve-permission`, `mr-not-opened`. 문자열 메시지를 파싱하게 만들지 않는다(MUST NOT).
+`server-changed`는 위 이유로 `status`에 없다 — `push`의 `--dry-run`/`--json`이 쓴다(§9).
 
 ---
 

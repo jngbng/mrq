@@ -68,6 +68,9 @@ mrq/
 | `gitcmd.py` | git plumbing 래퍼. **모든** git 호출이 여기를 지난다. `-c core.quotepath=false` 기본 | `run`, `toplevel`, `have_commit`, `has_path`, `fetch`, `show`, `diff_name_status`, `diff_u0`, `diff_u3` |
 | `glab.py` | `glab api` 래퍼. **모든** 네트워크 호출이 여기를 지난다 | `api(path, *, method, fields, body, paginate, check)` |
 | `store.py` | `.mrq/` 레이아웃, 원자적 쓰기, flock, git ignore 보장, 공통 진입점 | `open_review`, `ReviewContext`, `repo_root`, `mrq_dir`, `review_dir`, `review_json_path`, `review_md_path`, `ensure_mrq_gitignore`, `read_current`, `write_current`, `clear_current`, `atomic_write_text`, `review_lock` |
+| `render.py` | `review.json` → `review.md` 문자열. 파일을 만지지 않는다. `v:` 해시 정규형의 유일한 정의 | `render`, `vhash`, `normalize_reply`, `order`, `visible`, `header_line` |
+| `mdparse.py` | `review.md` → 블록·경고·에러. fence 를 추적한다. 파일을 만지지 않고 예외를 올리지 않는다 | `FileMeta`, `Block`, `Message`, `Parsed`, `parse`, `ANCHOR_RE` |
+| `surface.py` | 정본 json + 편집면 md 를 함께 갱신하는 유일한 지점 | `now`, `write` |
 | `model.py` | `review.json` 데이터 클래스 + 직렬화 + 스키마 검증 | `Review`, `Thread`, `Server`, `Position`, `Anchor`, `Location`, `Local`, `Note`, `Me`, `Capabilities`, `DiffRefs`, `schema_path`, `validate`, `check_version`, `dumps`, `loads` |
 | `mr.py` | MR 탐지와 메타데이터 | `PROJECT`, `MrInfo`, `detect`, `project_info`, `diff_refs`, `whoami`, `draft_notes_available`, `current_branch` |
 | `discussions.py` | discussions 응답 → `Thread`. 시스템 노트 필터와 파생 필드 | `fetch`, `to_threads` |
@@ -75,10 +78,13 @@ mrq/
 | `anchor.py` | `anchor` 추출 (line, context 3줄, hunk) | `CONTEXT_LINES`, `read_lines`, `extract`, `hunk_for` |
 | `search.py` | 문자열 탐색 fallback. git·파일시스템을 모른다 | `WINDOW`, `find` |
 | `reanchor.py` | 재앵커링 오케스트레이션 | `MR_HEAD_REFSPEC`, `Stats`, `ensure_commits`, `reanchor_all` |
-| `commands/*.py` | 명령별 `run(args) -> int`. 하나의 명령이 하나의 파일 | `pull.run`, `reanchor.run` |
+| `conflict.py` | 충돌 판정 (`data-model.md` §5.2). 사람(md)과 AI(CLI)가 같은 스레드를 다르게 고친 경우만 충돌. "렌더 후 json 변경"은 `v` 핑거프린트로 판정한다(`decisions/0008`) | `Applied`, `Conflict`, `md_values`, `classify`, `plan_sync` |
+| `threads.py` | 스레드 참조 해석과 `list` 필터 (`cli.md` §1, §7). 접두사가 여럿과 겹치면 exit 1 — 모호한 `--thread` 가 엉뚱한 스레드에 적용되는 것을 막는 유일한 지점 | `resolve_ref`, `filter_threads` |
+| `report.py` | `status` 집계 — push 블록이 전송 직전 검토면이다 (`cli.md` §8) | `status_payload` |
+| `commands/*.py` | 명령별 `run(args) -> int`. 하나의 명령이 하나의 파일 | `pull.run`, `reanchor.run`, `sync.run`, `status.run`, `listing.run` |
 
-파서와 렌더러(계획 2)는 `review_md.py`로 들어온다. `push`(계획 3)는
-`commands/push.py`이며 `glab.py`의 확장을 요구한다 — `docs/plans/2026-10-12-cli-core-residuals.md`의 R3.
+`push`(계획 3)는 `commands/push.py`이며 `glab.py`의 확장을 요구한다 —
+`docs/plans/2026-10-12-cli-core-residuals.md`의 R3.
 
 ### `testdata/`를 분리하는 이유
 
