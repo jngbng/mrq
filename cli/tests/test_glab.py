@@ -201,3 +201,19 @@ def test_query_on_non_get_method_is_rejected(glab):
     # GET/DELETE 가 아니면 -f 는 JSON 본문으로 간다. 조용히 틀린 요청이 된다.
     with pytest.raises(ValueError):
         glab_mod.api("notes", method="POST", query={"a": "b"})
+
+
+def test_paginate_concatenates_pages_in_order(glab):
+    glab.route("GET discussions", pages=['{"id": "a"}\n{"id": "b"}\n', '{"id": "c"}\n'])
+    assert glab_mod.api("discussions", paginate=True) == [
+        {"id": "a"},
+        {"id": "b"},
+        {"id": "c"},
+    ]
+
+
+def test_without_paginate_only_the_first_page_is_returned(glab):
+    # 진짜 glab 도 --paginate 없이는 1 페이지만 준다. 하네스가 전부 주면
+    # "페이지네이션을 빠뜨린 코드" 가 테스트를 통과해 버린다.
+    glab.route("GET discussions", pages=['[{"id": "a"}]', '[{"id": "c"}]'])
+    assert glab_mod.api("discussions") == [{"id": "a"}]

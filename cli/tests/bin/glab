@@ -35,10 +35,18 @@ def _is_api_call(argv: list[str]) -> bool:
     return argv[:1] == ["api"] and len(argv) >= 2
 
 
-def _body(fixtures: Path, response: dict) -> str:
+def _body(fixtures: Path, response: dict, paginate: bool) -> str:
+    if "pages" in response:
+        pages = _pages(fixtures, response)
+        # --paginate 가 없으면 진짜 glab 도 1 페이지만 준다.
+        return "".join(pages) if paginate else pages[0]
     if "file" in response:
         return (fixtures / response["file"]).read_text(encoding="utf-8")
     return response.get("body", "")
+
+
+def _pages(fixtures: Path, response: dict) -> list[str]:
+    return [(fixtures / name).read_text(encoding="utf-8") for name in response["pages"]]
 
 
 # 실물에서 받은 상태 문구. 진짜 glab 이 내는 모양에 가깝게 둔다.
@@ -137,10 +145,20 @@ def main() -> int:
     response = responses[min(seen, len(responses) - 1)]
 
     status = response.get("status", 200)
-    body = _body(fixtures, response)
+    paginate = "--paginate" in argv
+    body = _body(fixtures, response, paginate)
     include = "-i" in argv or "--include" in argv
 
-    sys.stdout.write((_header_block(status) if include else "") + body)
+    if include and paginate and "pages" in response:
+        # 진짜 glab 은 페이지마다 헤더 블록을 낸다 (1.114 실측). api() 는 이
+        # 조합을 보내지 않지만(cli.md §3), 하네스가 조용히 잘 처리하면
+        # 나중에 누가 paginate 경로에 -i 를 붙였을 때 실제 GitLab 에서만
+        # 깨진다. 실물과 똑같이 깨뜨려 테스트가 잡게 한다.
+        sys.stdout.write(
+            "".join(_header_block(status) + page for page in _pages(fixtures, response))
+        )
+    else:
+        sys.stdout.write((_header_block(status) if include else "") + body)
 
     if status >= 400:
         print(f"glab: {_message(body, status)} (HTTP {status})", file=sys.stderr)
