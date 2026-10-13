@@ -867,3 +867,126 @@ def test_push_json_keeps_stdout_as_a_single_json_object(pushable, glab, capsys):
     out = capsys.readouterr().out
     payload = json.loads(out)
     assert payload["pushed"]["replies"] == 1
+
+
+def test_dry_run_lists_targets_and_sends_nothing(pushable, glab, capsys):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    _set_local(pushable, "7a0b1c2d3e4f", state="replied", reply="개별 노트라 못 보낸다")
+
+    assert main(["push", "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a1b2c3d4" in out
+    assert "reply" in out and "resolve" in out
+    assert "skip  no-reply" in out
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_dry_run_json_is_the_only_thing_on_stdout(pushable, capsys):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+
+    assert main(["push", "--dry-run", "--json"]) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)  # 섞인 것이 있으면 여기서 터진다
+    assert payload["push"]["replies"] == 1
+    assert payload["push"]["resolves"] == 1
+
+
+def test_push_json_reports_failures_with_retryable(pushable, glab, capsys):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(
+        RESOLVE.format(did="a1b2c3d4e5f6"),
+        raw='{"message":"403 Forbidden"}',
+        status=403,
+    )
+
+    assert main(["push", "--json"]) == 4
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["pushed"] == {"replies": 1, "resolves": 0}
+    assert payload["failures"] == [
+        {
+            "thread": "a1b2c3d4e5f6",
+            "op": "resolve",
+            "status": 403,
+            "reason": "forbidden",
+            "retryable": False,
+        }
+    ]
+
+
+def test_push_with_nothing_to_send_is_success(pushable, glab, capsys):
+    # Review Focus 5. 빈 결과를 실패로 보고하면 안 된다.
+    assert main(["push"]) == 0
+
+    assert "보낼 것이 없습니다" in capsys.readouterr().out
+
+
+def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsys):
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    review.mr_state = "merged"
+    store.atomic_write_text(path, model.dumps(review))
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    # 비대화형이므로 묻지 않고 거부한다 — AI 가 부르는 경로에서 input() 이
+    # 블로킹되면 세션이 멈춘다.
+    monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+
+    assert main(["push"]) == 1
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+
+    assert main(["push", "--force"]) == 0
+
+
+def test_resolve_auto_without_permission_is_exit_zero(pushable, glab, capsys):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    review.me.can_resolve = False
+    store.atomic_write_text(path, model.dumps(review))
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(
+        "GET projects/:fullpath",
+        {
+            "path_with_namespace": "group/sub/project",
+            "permissions": {"project_access": {"access_level": 20}, "group_access": None},
+        },
+    )
+
+    # 요청하지 않은 일은 실패가 아니다 (cli.md §9).
+    assert main(["push"]) == 0
+
+
+def test_resolve_require_without_permission_sends_nothing(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    review.me.can_resolve = False
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["push", "--resolve", "require"]) == 1
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+
+
+def test_push_json_payloads_validate_against_the_contract(pushable, glab, capsys):
+    # cli.md §9 의 페이로드 모양. 키가 바뀌면 에디터와 AI 가 조용히 깨진다.
+    assert main(["push", "--json"]) == 0
+    payload = json.loads(capsys.readouterr().out)
+    assert set(payload) == {"pushed", "failures"}
+    assert set(payload["pushed"]) == {"replies", "resolves"}

@@ -12,7 +12,7 @@ import contextlib
 import json
 import sys
 
-from mrq import discussions, mdsync, model, push, store, surface, transport
+from mrq import discussions, mdsync, model, prompt, push, store, surface, transport
 from mrq.commands import pull as pull_command
 from mrq.errors import GlabError, MrqError, UsageError
 
@@ -46,10 +46,84 @@ def run(args) -> int:
         # 전체를 한 번만 조회한다(MUST). 스레드별 GET 은 N+1 이다.
         snapshot = discussions.to_threads(discussions.fetch(iid), review.me.username)
         sheet = push.plan(review, snapshot=snapshot, resolve=args.resolve, force=args.force)
+
+        if args.dry_run:
+            return _report_dry_run(review, sheet, json_mode=args.json)
+        if review.mr_state != "opened":
+            prompt.confirm(
+                f"MR 이 {review.mr_state} 상태입니다. 보통은 브랜치를 바꾼 뒤 "
+                "`.mrq/current` 가 낡은 것을 가리키고 있다는 신호입니다.",
+                force=args.force,
+            )
         failures = _send(root, review, sheet)
 
     _repull(iid, json_mode=args.json)
     return _report(sheet, failures, json_mode=args.json)
+
+
+# `push.SKIP_REASONS` 와 같은 집합을 덮어야 한다. 빠진 값이 있으면 그 스레드의
+# 행에서 KeyError 가 난다 — 검토면이 터지는 가장 싼 방법이다.
+_SKIP_TEXT = {reason: reason for reason in push.SKIP_REASONS}
+
+
+def _report_dry_run(review: model.Review, sheet: push.Plan, *, json_mode: bool) -> int:
+    if json_mode:
+        json.dump(
+            {
+                "iid": review.iid,
+                "push": {
+                    "replies": sheet.replies,
+                    "resolves": sheet.resolves,
+                    "skip": sheet.skip,
+                },
+                "decisions": [
+                    {
+                        "thread": d.thread,
+                        "reply": bool(d.reply),
+                        "bytes": len(d.reply.encode()),
+                        "resolve": d.resolve,
+                        "skip": d.skip,
+                    }
+                    for d in sheet.decisions
+                ],
+                "warnings": sheet.warnings,
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    by_id = {t.id: t for t in review.threads}
+    for decision in sheet.decisions:
+        where = _where(by_id[decision.thread])
+        if decision.skip:
+            print(f"{decision.thread[:8]}  skip  {_SKIP_TEXT[decision.skip]:<16}  {where}")
+            continue
+        ops = []
+        if decision.reply:
+            ops.append(f"reply({len(decision.reply.encode())}B)")
+        if decision.resolve:
+            ops.append("resolve")
+        if not ops and decision.record_hash:
+            ops.append("기록만 (서버에 이미 있음)")
+        print(f"{decision.thread[:8]}  {' + '.join(ops):<24}  {where}")
+    if not sheet.decisions:
+        print("보낼 것이 없습니다.")
+    return 0
+
+
+def _where(thread: model.Thread) -> str:
+    """`--dry-run` 의 위치 칼럼. `review.md` 헤더와 같은 규칙을 쓴다."""
+    if thread.location is None or not thread.location.path:
+        return "(general)"
+    line = thread.location.line or 1
+    suffix = (
+        f"    `{thread.location.confidence}`"
+        if thread.location.confidence in ("stale", "fuzzy")
+        else ""
+    )
+    return f"{thread.location.path}:{line}{suffix}"
 
 
 def _send(root, review: model.Review, sheet: push.Plan) -> list[dict]:
@@ -161,7 +235,10 @@ def _report(sheet: push.Plan, failures: list[dict], *, json_mode: bool) -> int:
         )
         sys.stdout.write("\n")
     else:
-        print(f"pushed: 답글 {sent_replies}건 · resolve {sent_resolves}건")
+        if not sheet.decisions:
+            print("보낼 것이 없습니다.")
+        else:
+            print(f"pushed: 답글 {sent_replies}건 · resolve {sent_resolves}건")
         for failure in failures:
             retry = "재실행하면 다시 시도합니다" if failure["retryable"] else "재시도하지 않습니다"
             print(
