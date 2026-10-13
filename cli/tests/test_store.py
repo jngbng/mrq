@@ -185,6 +185,11 @@ def test_review_lock_releases(git_repo, commit):
 def test_read_current_survives_a_non_numeric_pointer(git_repo, commit):
     commit({"a.txt": "x\n"})
     store.mrq_dir(git_repo).mkdir(parents=True, exist_ok=True)
+    # 대상 디렉터리가 실제로 있어야 `current.is_dir()`가 True 가 되어 `int()`
+    # 분기까지 들어간다 — 매달린 심링크는 `is_dir()`/`is_file()` 모두 False 라
+    # 고치기 전 코드에서도 터지지 않고 조용히 통과해, 이 테스트가 지키려는
+    # 줄을 전혀 실행하지 않는다.
+    (store.mrq_dir(git_repo) / "not-a-number").mkdir()
     (store.mrq_dir(git_repo) / "current").symlink_to("not-a-number", target_is_directory=True)
 
     # 손으로 만든 포인터에서 int() 가 터지면 사용자의 탈출구가 rm -rf 뿐이다.

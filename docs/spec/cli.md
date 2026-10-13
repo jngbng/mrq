@@ -17,7 +17,7 @@ mrq reply    <thread> (-m MSG | -F FILE | -F -) [--state STATE]
 mrq state    <thread> <todo|done|replied|skipped>
 mrq list     [--json] [--all] [--state S] [--confidence C]
 mrq open     [--mr IID] [--thread ID]
-mrq clean    [--merged] [--closed] [--dry-run]
+mrq clean    [--merged] [--closed] [--dry-run] [--force]
 mrq doctor
 ```
 
@@ -71,8 +71,13 @@ md와 `v:` 해시가 함께 갱신되므로, 사람이 그 뒤에 파일을 열�
 
 ### 상태가 없을 때
 
-`.mrq/current`가 없으면 `pull`과 `doctor`를 제외한 모든 명령은 **exit 1**과 함께
-`mrq pull`을 안내해야 한다(MUST). 빈 결과를 성공으로 보고하면 안 된다(MUST NOT).
+`.mrq/current`가 없으면 `pull`·`doctor`·`clean`을 제외한 모든 명령은 **exit 1**과
+함께 `mrq pull`을 안내해야 한다(MUST). 빈 결과를 성공으로 보고하면 안 된다(MUST
+NOT).
+
+`clean`이 예외인 이유는 `current` 한 건이 아니라 `.mrq/` 전체의 저장된 MR
+집합을 대상으로 동작하기 때문이다. 제거할 대상이 없는 것은 참인 성공이고, 깨끗한
+저장소에서 `mrq clean`을 에러처럼 보이게 만드는 쪽이 스크립트에서 더 나쁘다.
 
 ### 체크아웃이 다른 브랜치로 옮겨갔을 때
 
@@ -655,8 +660,13 @@ mrq state a1b2 done
 
 - `--merged` / `--closed`로 대상을 고른다. 둘 다 없으면 둘 다
 - `local.reply`가 비어 있지 않거나 `state != todo`인 스레드가 있으면 **확인을
-  요구해야 한다**(MUST) — 전송하지 않은 작업이 남아 있다
+  요구해야 한다**(MUST) — 전송하지 않은 작업이 남아 있다. 이 판정은 일부러
+  보수적이다 — 이미 push된 스레드(`done`/`replied`로 남아 있지만 재전송할
+  내용은 없는 경우)도 "미전송 작업"으로 센다. 틀린 방향이 안전한 방향이므로
+  더 정밀하게 고치지 않는다
 - `--dry-run`으로 대상만 출력
+- `--force`로 위 확인을 건너뛴다 (`prompt.confirm`과 같은 규칙, `push`의
+  `--force`와 동일한 의미)
 
 ---
 
