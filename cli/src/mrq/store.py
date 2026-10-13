@@ -130,9 +130,15 @@ def check_branch(root: Path, iid: int, path: Path, mode: str) -> None:
 
 
 def read_current(root: Path) -> int | None:
+    """`.mrq/current` 가 가리키는 iid. 읽을 수 없으면 `None`.
+
+    손으로 만든 비숫자 포인터에서 터지면 안 된다 — 모든 명령이 이 함수를
+    지나므로 예외가 나면 사용자의 탈출구가 `rm -rf .mrq/` 뿐이다.
+    """
     current = mrq_dir(root) / "current"
     if current.is_dir():
-        return int(current.resolve().name)
+        name = current.resolve().name
+        return int(name) if name.isdigit() else None
     if current.is_file():
         text = current.read_text(encoding="utf-8").strip()
         return int(text) if text.isdigit() else None

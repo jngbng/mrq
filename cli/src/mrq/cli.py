@@ -74,6 +74,12 @@ def build_parser() -> argparse.ArgumentParser:
     open_cmd.add_argument("--mr", type=int, default=None)
     open_cmd.add_argument("--thread", default=None)
 
+    clean = sub.add_parser("clean", help="merged/closed MR 의 리뷰 상태를 제거한다")
+    clean.add_argument("--merged", action="store_true")
+    clean.add_argument("--closed", action="store_true")
+    clean.add_argument("--dry-run", action="store_true")
+    clean.add_argument("--force", action="store_true", help="미전송 작업이 있어도 제거한다")
+
     sub.add_parser("doctor", help="환경을 진단한다")
 
     return parser
@@ -84,6 +90,7 @@ def dispatch(argv: list[str]) -> int:
     if args.command is None:
         raise UsageError("명령을 지정하세요. `mrq --help` 를 보세요.")
 
+    from mrq.commands import clean as clean_command
     from mrq.commands import doctor as doctor_command
     from mrq.commands import listing as listing_command
     from mrq.commands import open as open_command
@@ -105,6 +112,7 @@ def dispatch(argv: list[str]) -> int:
         "state": state_command.run,
         "push": push_command.run,
         "open": open_command.run,
+        "clean": clean_command.run,
         "doctor": doctor_command.run,
     }
     return handlers[args.command](args)

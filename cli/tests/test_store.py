@@ -180,3 +180,12 @@ def test_review_lock_releases(git_repo, commit):
         pass
     with store.review_lock(git_repo, 7):
         pass
+
+
+def test_read_current_survives_a_non_numeric_pointer(git_repo, commit):
+    commit({"a.txt": "x\n"})
+    store.mrq_dir(git_repo).mkdir(parents=True, exist_ok=True)
+    (store.mrq_dir(git_repo) / "current").symlink_to("not-a-number", target_is_directory=True)
+
+    # 손으로 만든 포인터에서 int() 가 터지면 사용자의 탈출구가 rm -rf 뿐이다.
+    assert store.read_current(git_repo) is None
