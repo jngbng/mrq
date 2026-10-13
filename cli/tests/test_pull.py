@@ -17,7 +17,7 @@ MR = {
     "state": "opened",
     "source_branch": "feat/retry",
 }
-SEARCH = "GET projects/:fullpath/merge_requests?source_branch=feat/retry&state=opened&per_page=100"
+SEARCH = "GET projects/:fullpath/merge_requests"
 
 
 @pytest.fixture
@@ -43,9 +43,14 @@ def pullable(git_repo, commit, glab, monkeypatch):
         [{"head_commit_sha": sha, "base_commit_sha": sha, "start_commit_sha": sha}],
     )
     glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
+    # 2 페이지로 나눠 등록한다. 한 페이지 N 줄과 구분되는 유일한 모양이고
+    # testing.md §3 이 요구한다.
     glab.route(
         "GET projects/:fullpath/merge_requests/1234/discussions",
-        raw=(FIXTURES / "discussions.ndjson").read_text(encoding="utf-8"),
+        pages=[
+            (FIXTURES / "discussions-page0.ndjson").read_text(encoding="utf-8"),
+            (FIXTURES / "discussions-page1.ndjson").read_text(encoding="utf-8"),
+        ],
     )
     return git_repo
 

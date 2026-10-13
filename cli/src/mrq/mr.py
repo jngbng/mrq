@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mrq import gitcmd, glab, model, store
-from mrq.errors import MrDetectionError
+from mrq.errors import GlabError, MrDetectionError
 
 PROJECT = "projects/:fullpath"
 
@@ -60,7 +60,10 @@ def detect(root: Path, explicit_iid: int | None = None) -> MrInfo:
             if model.peek_source_branch(path.read_text(encoding="utf-8")) == branch:
                 return _fetch(cached)
 
-    found = glab.api(f"{PROJECT}/merge_requests?source_branch={branch}&state=opened&per_page=100")
+    found = glab.api(
+        f"{PROJECT}/merge_requests",
+        query={"source_branch": branch, "state": "opened", "per_page": "100"},
+    )
     if not found:
         raise MrDetectionError(
             f"브랜치 {branch} 에 열린 MR 이 없습니다. `--mr <iid>` 로 지정하세요."
@@ -107,5 +110,14 @@ def whoami() -> tuple[int, str]:
 
 
 def draft_notes_available(iid: int) -> bool:
-    """가용성을 탐지만 한다. 미지원이면 `--draft` 를 명시적으로 거부한다."""
-    return glab.api(f"{PROJECT}/merge_requests/{iid}/draft_notes", check=False) is not None
+    """가용성을 탐지만 한다. 미지원이면 `--draft` 를 명시적으로 거부한다.
+
+    404(이 GitLab 이 지원하지 않음)와 네트워크 장애를 지금은 똑같이 False 로
+    접는다. `GlabError.status` 로 구분할 수단은 생겼고, 구분해서 무엇을 할지는
+    `--draft` 를 만드는 12 단계의 몫이다.
+    """
+    try:
+        glab.api(f"{PROJECT}/merge_requests/{iid}/draft_notes")
+    except GlabError:
+        return False
+    return True

@@ -134,20 +134,63 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 ### `glab` 기능 확인
 
 버전 번호를 하드코딩하지 않는다(MUST NOT). `doctor`가 이 도구가 의존하는 기능 셋을
-직접 확인한다 — `:fullpath` 확장, `--paginate --output ndjson`, `-F key=@-`.
+직접 확인한다 — `:fullpath` 확장, `--paginate --output ndjson`, `-F key=@-`,
+`-i` 가 비2xx 에도 헤더를 내는 것, 그리고 **명시적 `--method GET` 에서 `-f` 가 URL
+쿼리가 되는 것**. 마지막 둘은 각각 `push_error.status` 와 MR 탐지가 의존하는
+동작이고, glab 이 바꾸면 조용히 틀린 결과가 된다.
 버전 문자열은 표시용으로만 쓴다.
 
-### 알려진 공백: `api()` 는 HTTP 상태를 돌려주지 않는다
+### `api()` 의 계약
 
-현재 래퍼는 성공 시 파싱된 JSON, 실패 시 `NetworkError`(또는 `check=False` 면
-`None`)만 준다. 이것으로는 `local.push_error.status`(`data-model.md` §4.8)를 채울 수
-없다 — 403 과 404 와 네트워크 실패를 구분할 수 없기 때문이다.
+성공하면 파싱된 JSON, 실패하면 `GlabError` 다. `GlabError` 는 `NetworkError` 를
+상속하므로 종료 코드는 5 다.
 
-`push` 를 구현하는 계획에서 `api()` 를 확장해야 한다(MUST). 상태 코드와 stderr 를
-함께 돌려주는 형태로 바꾸면 `check=False` 의 또 다른 모호성도 같이 해소된다 —
-지금은 "호출 실패"와 "성공했지만 본문이 비었음"이 모두 `None` 이다. 이 계획의
-유일한 `check=False` 호출처(`draft_notes_available`)는 엔드포인트가 성공 시 `[]` 를
-주므로 영향을 받지 않는다.
+| 속성 | 값 |
+|---|---|
+| `status` | HTTP 상태. 읽지 못했으면 `null` |
+| `reason` | `forbidden`(403) · `not-found`(404) · `conflict`(409) · `network`(상태 미상) · `unknown` |
+| `retryable` | `status` 가 `null` 이거나 5xx 일 때만 참 |
+
+`reason` 과 `retryable` 을 그대로 `local.push_error` 에 쓴다(`data-model.md` §4.8).
+상태를 `(status, data)` 튜플로 돌려주지 않는다(MUST NOT) — 상태가 필요한 곳은
+실패할 때뿐이고, 튜플은 모든 호출처를 언패킹으로 바꾸면서 **확인을 빼먹어도
+조용히 통과하는** 모양을 만든다. 결정
+[0010](../decisions/0010-glab-status-via-exception.md) 에 기록되어 있다.
+
+### 쿼리 파라미터
+
+쿼리를 경로 문자열에 보간하면 안 된다(MUST NOT). 브랜치 이름의 `#` 가
+프래그먼트로 잘려 **그 뒤의 파라미터까지 통째로 사라진다** — `source_branch` 만
+깨지는 것이 아니라 `state=opened` 도 함께 날아가 닫힌 MR 이 후보에 들어온다.
+
+| | 플래그 | 가는 곳 |
+|---|---|---|
+| `query` | `-f` (`--raw-field`) | URL 쿼리. 값이 전부 문자열이다 |
+| `fields` | `-F` (`--field`) | JSON 본문. `resolved=true` 가 불리언이어야 한다 |
+
+`-f` 가 URL 쿼리가 되는 것은 **`--method` 가 명시된 GET/DELETE 에서만**이다.
+`--method` 없이 필드를 붙이면 glab 이 요청을 POST 로 바꾼다. `api()` 는 항상
+`--method` 를 넘기고, `query` 를 GET/DELETE 가 아닌 메서드에 주면 거부한다(MUST).
+
+### 상태 코드를 읽는 방법
+
+`paginate=False` 일 때 `-i` 를 붙이고 응답 첫 줄(`HTTP/<버전> <코드>`)에서 읽는다.
+본문은 **첫** `\r\n\r\n` 뒤부터다 — 본문이 빈 줄을 담고 있어도 잃지 않는다.
+
+**`-i` 는 비2xx 응답에도 헤더 블록을 낸다**(glab 1.114 실측, 404·502 확인).
+`GlabError.status` 가 통째로 이 사실 위에 서 있다 — 실패 응답에 헤더가 없다면
+상태 코드를 읽을 길이 없고 모든 실패가 `network` 로 접힌다. `-i` 를 떼거나 실패
+경로에서 건너뛰는 "최적화" 를 하면 `local.push_error.status` 가 조용히 전부
+`null` 이 된다.
+
+바이트 모양도 실측이다 — 상태줄은 `\n` 으로, 헤더는 `\r\n` 으로 끝난다. 파서는
+`\n\n` 도 구분자로 받아들여 glab 이 형식을 바꿔도 본문을 잃지 않는다.
+
+**`--paginate` 에는 `-i` 를 붙이지 않는다**(MUST NOT). glab 이 페이지마다 헤더
+블록을 내 ndjson 파싱이 깨진다. 그 경로(`pull` 의 discussions)는 상태 코드를 쓰지
+않는 유일한 경로이고, 거기서 실패하면 `status` 는 `null`, `reason` 은 `network`
+다. `reason` 의 소비자는 `local.push_error` 뿐이고 `push` 는 paginate 를 쓰지
+않으므로 틀린 `reason` 이 기록으로 남을 경로가 없다.
 
 ### 사용하는 엔드포인트
 

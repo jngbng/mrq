@@ -12,7 +12,7 @@ MR_1234 = {
 }
 MR_5678 = {**MR_1234, "iid": 5678, "title": "Other", "source_branch": "feat/retry"}
 
-SEARCH = "GET projects/:fullpath/merge_requests?source_branch=feat/retry&state=opened&per_page=100"
+SEARCH = "GET projects/:fullpath/merge_requests"
 
 
 @pytest.fixture
@@ -50,7 +50,9 @@ def test_detect_multiple_mrs_lists_candidates(repo_on_branch, glab):
 def test_explicit_iid_skips_search(repo_on_branch, glab):
     glab.route("GET projects/:fullpath/merge_requests/1234", MR_1234)
     assert mr.detect(repo_on_branch, explicit_iid=1234).iid == 1234
-    assert all("source_branch=" not in call["argv"][1] for call in glab.calls())
+    assert all(
+        not any(arg.startswith("source_branch=") for arg in call["argv"]) for call in glab.calls()
+    )
 
 
 def test_current_is_reused_when_branch_matches(repo_on_branch, glab, review_json):
@@ -117,3 +119,41 @@ def test_draft_notes_unavailable_is_false(glab):
 def test_draft_notes_available_is_true(glab):
     glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
     assert mr.draft_notes_available(1234) is True
+
+
+def test_draft_notes_unavailable_on_404(glab):
+    # 이 GitLab 이 draft notes 를 지원하지 않는 경우.
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/draft_notes",
+        {"message": "404 Not found"},
+        status=404,
+    )
+    assert mr.draft_notes_available(1234) is False
+
+
+def test_draft_notes_unavailable_on_server_error(glab):
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/draft_notes",
+        {"message": "502 Bad Gateway"},
+        status=502,
+    )
+    assert mr.draft_notes_available(1234) is False
+
+
+def test_detect_handles_special_characters_in_branch_name(git_repo, commit, glab):
+    import subprocess
+
+    commit({"a.py": "x\n"})
+    branch = "feat/#123&x%y+z"
+    subprocess.run(["git", "checkout", "-q", "-b", branch], cwd=git_repo, check=True)
+    glab.route("GET projects/:fullpath/merge_requests", [{**MR_1234, "source_branch": branch}])
+
+    info = mr.detect(git_repo)
+
+    assert info.iid == 1234
+    # 쿼리가 경로에 보간되지 않았다. 보간하면 `#` 뒤가 잘려 state 와 per_page
+    # 까지 사라지고 닫힌 MR 이 후보에 들어온다.
+    argv = glab.calls()[0]["argv"]
+    assert argv[1] == "projects/:fullpath/merge_requests"
+    assert f"source_branch={branch}" in argv
+    assert "state=opened" in argv

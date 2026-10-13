@@ -37,6 +37,29 @@ class NetworkError(MrqError):
     exit_code = 5
 
 
+class GlabError(NetworkError):
+    """`glab api` 호출 실패. HTTP 상태를 함께 나른다.
+
+    `reason` 과 `retryable` 은 `docs/spec/data-model.md` §4.8 의 `local.push_error`
+    가 그대로 쓰는 값이다. 소비자가 `message` 문자열을 파싱하게 만들지 않는다.
+    """
+
+    _REASONS = {403: "forbidden", 404: "not-found", 409: "conflict"}
+
+    # 요청 타임아웃과 rate limit. GitLab 은 API 에 기본 rate limit 이 걸려 있어
+    # 429 가 실제로 나온다. `reason` 열거값에 자리가 없지만 둘은 독립이다 —
+    # `{reason: "unknown", retryable: true}` 로 표현한다.
+    _TRANSIENT = frozenset({408, 429})
+
+    def __init__(self, message: str, *, status: int | None = None) -> None:
+        super().__init__(message)
+        self.status = status
+        self.reason = "network" if status is None else self._REASONS.get(status, "unknown")
+        # "시간이 지나면 같은 요청이 성공할 수 있는가" 로 정한다. 403·404·409 는
+        # 다시 보내도 같은 결과다 — 참으로 표시하면 에이전트가 루프를 돈다.
+        self.retryable = status is None or status >= 500 or status in self._TRANSIENT
+
+
 class MrDetectionError(MrqError):
     """MR 이 0 건이거나 2 건 이상이다."""
 

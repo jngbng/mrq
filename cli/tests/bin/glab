@@ -6,6 +6,13 @@
   MRQ_GLAB_LOG       호출 기록 (JSON Lines: {"argv": [...], "stdin": "..."})
   MRQ_GLAB_FAIL_AT   N 번째 호출에서 exit 1 (1-indexed, 콤마 구분)
 
+`routes.json` 은 `"<METHOD> <path>"` 마다 **응답 목록** 을 담는다. 그 키로 들어온
+호출의 순서대로 소비하고, 목록이 소진되면 마지막 것이 반복된다. 응답 하나는
+`{"status": 200, "file"|"body"|"pages": ...}` 다.
+
+`MRQ_GLAB_FAIL_AT` 으로 죽인 호출도 소비한 것으로 센다 — 로그에 남은 호출이
+기준이다. "요청은 갔는데 그 뒤에 죽었다" 가 크래시 복구가 다루는 모양이다.
+
 등록되지 않은 경로는 exit 1 이다. 조용히 통과시키면 테스트가 거짓으로 녹색이 된다.
 """
 
@@ -17,50 +24,145 @@ import sys
 from pathlib import Path
 
 
+def route_key(argv: list[str]) -> str:
+    method = "GET"
+    if "--method" in argv:
+        method = argv[argv.index("--method") + 1]
+    return f"{method} {argv[1]}"
+
+
+def _is_api_call(argv: list[str]) -> bool:
+    return argv[:1] == ["api"] and len(argv) >= 2
+
+
+def _body(fixtures: Path, response: dict, paginate: bool) -> str:
+    if "pages" in response:
+        pages = _pages(fixtures, response)
+        # --paginate 가 없으면 진짜 glab 도 1 페이지만 준다.
+        return "".join(pages) if paginate else pages[0]
+    if "file" in response:
+        return (fixtures / response["file"]).read_text(encoding="utf-8")
+    return response.get("body", "")
+
+
+def _pages(fixtures: Path, response: dict) -> list[str]:
+    return [(fixtures / name).read_text(encoding="utf-8") for name in response["pages"]]
+
+
+# 실물에서 받은 상태 문구. 진짜 glab 이 내는 모양에 가깝게 둔다.
+_REASON_PHRASE = {
+    200: "OK",
+    201: "Created",
+    204: "No Content",
+    403: "Forbidden",
+    404: "Not Found",
+    409: "Conflict",
+    418: "I'm a teapot",
+    500: "Internal Server Error",
+    502: "Bad Gateway",
+    503: "Service Unavailable",
+}
+
+
+def _header_block(status: int) -> str:
+    """진짜 glab 이 내는 바이트 모양 그대로.
+
+    상태줄은 LF 로, 헤더는 CRLF 로 끝나고 마지막 헤더의 CRLF 와 빈 줄의 CRLF 가
+    합쳐져 CRLFCRLF 구분자가 된다 (1.114 실측).
+    """
+    headers = (
+        "Content-Type: application/json",
+        "Gitlab-Lb: haproxy-main-20-lb-gprd",
+        "X-Request-Id: fake-request-id",
+    )
+    status_line = f"HTTP/2.0 {status} {_REASON_PHRASE.get(status, '')}".rstrip() + "\n"
+    return status_line + "".join(f"{header}\r\n" for header in headers) + "\r\n"
+
+
+def _message(body: str, status: int) -> str:
+    """에러 본문에서 사람이 읽을 메시지를 뽑는다. JSON 이 아니어도 터지지 않는다."""
+    try:
+        parsed = json.loads(body)
+    except (ValueError, TypeError):
+        return f"HTTP {status}"
+    if isinstance(parsed, dict) and isinstance(parsed.get("message"), str):
+        return parsed["message"]
+    return f"HTTP {status}"
+
+
 def main() -> int:
     argv = sys.argv[1:]
 
     # `-F key=@-` 가 있을 때만 stdin 을 읽는다. 무조건 읽으면 상속된 stdin 에서 막힌다.
     stdin = sys.stdin.read() if any(arg.endswith("=@-") for arg in argv) else ""
 
-    index = 1
+    entries: list[dict] = []
     log = os.environ.get("MRQ_GLAB_LOG")
     if log:
         log_path = Path(log)
         if log_path.exists():
-            index = len(log_path.read_text(encoding="utf-8").splitlines()) + 1
+            entries = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps({"argv": argv, "stdin": stdin}, ensure_ascii=False) + "\n"
-            )
+            handle.write(json.dumps({"argv": argv, "stdin": stdin}, ensure_ascii=False) + "\n")
 
     fail_at = {
         int(token)
         for token in os.environ.get("MRQ_GLAB_FAIL_AT", "").split(",")
         if token.strip()
     }
+    index = len(entries) + 1
     if index in fail_at:
         print(f"fake glab: 호출 {index} 에서 의도적으로 실패", file=sys.stderr)
         return 1
 
-    if argv[:1] != ["api"] or len(argv) < 2:
+    if not _is_api_call(argv):
         print(f"fake glab: 지원하지 않는 호출 {argv}", file=sys.stderr)
         return 1
 
-    method = "GET"
-    if "--method" in argv:
-        method = argv[argv.index("--method") + 1]
-    key = f"{method} {argv[1]}"
+    key = route_key(argv)
 
     fixtures = Path(os.environ["MRQ_GLAB_FIXTURES"])
     routes_path = fixtures / "routes.json"
     routes = json.loads(routes_path.read_text(encoding="utf-8")) if routes_path.exists() else {}
     if key not in routes:
         registered = "\n  ".join(sorted(routes)) or "(없음)"
-        print(f"fake glab: 등록되지 않은 경로 — {key}\n등록된 경로:\n  {registered}", file=sys.stderr)
+        print(
+            f"fake glab: 등록되지 않은 경로 — {key}\n등록된 경로:\n  {registered}",
+            file=sys.stderr,
+        )
         return 1
 
-    sys.stdout.write((fixtures / routes[key]).read_text(encoding="utf-8"))
+    # 같은 키로 들어온 이전 호출 수가 목록의 인덱스다. 경로별로 센다 —
+    # 전체 호출 수로 세면 다른 경로의 호출이 순서를 민다.
+    responses = routes[key]
+    seen = sum(
+        1 for entry in entries if _is_api_call(entry["argv"]) and route_key(entry["argv"]) == key
+    )
+    response = responses[min(seen, len(responses) - 1)]
+
+    status = response.get("status", 200)
+    paginate = "--paginate" in argv
+    body = _body(fixtures, response, paginate)
+    include = "-i" in argv or "--include" in argv
+
+    if include and paginate and "pages" in response:
+        # 진짜 glab 은 페이지마다 헤더 블록을 낸다 (1.114 실측). api() 는 이
+        # 조합을 보내지 않지만(cli.md §3), 하네스가 조용히 잘 처리하면
+        # 나중에 누가 paginate 경로에 -i 를 붙였을 때 실제 GitLab 에서만
+        # 깨진다. 실물과 똑같이 깨뜨려 테스트가 잡게 한다.
+        sys.stdout.write(
+            "".join(_header_block(status) + page for page in _pages(fixtures, response))
+        )
+    else:
+        sys.stdout.write((_header_block(status) if include else "") + body)
+
+    if status >= 400:
+        print(f"glab: {_message(body, status)} (HTTP {status})", file=sys.stderr)
+        return 1
     return 0
 
 

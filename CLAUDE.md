@@ -97,7 +97,7 @@ make deps
 pytest` 로 실패한다:
 
 ```bash
-cd cli && ./.venv/bin/python -m pytest          # 전체 (346개)
+cd cli && ./.venv/bin/python -m pytest          # 전체 (370개)
 cd cli && ./.venv/bin/python -m pytest -k anchor
 cd cli && ./.venv/bin/ruff format . && ./.venv/bin/ruff check --fix .
 ```
