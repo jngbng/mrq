@@ -1,5 +1,7 @@
 import subprocess
 
+import pytest
+
 from mrq import anchor as anchor_mod
 from mrq import linemap, model, reanchor, store
 from mrq.__main__ import main
@@ -202,7 +204,12 @@ def test_duplicate_lines_resolved_by_context_when_git_unavailable(git_repo, comm
 
 
 # 10. 멀티라인 line_range
-def test_multiline_range_maps_both_ends(git_repo, commit):
+#
+# position.new_line 은 범위의 어느 쪽이든 될 수 있다 — GitLab 이 보낸 값을
+# 정규화하지 않고 그대로 저장한다 (MR !1 실측). 두 모양이 같은 location 을
+# 내야 한다. 끝 줄이 들어온 모양만 FIX 전 구현에서 (4, 4) 가 됐다.
+@pytest.mark.parametrize("new_line", [3, 4], ids=["new_line=start", "new_line=end"])
+def test_multiline_range_maps_both_ends(git_repo, commit, new_line):
     line_range = {
         "start": {"line_code": "x_3_3", "type": "new", "old_line": None, "new_line": 3},
         "end": {"line_code": "x_4_4", "type": "new", "old_line": None, "new_line": 4},
@@ -212,7 +219,7 @@ def test_multiline_range_maps_both_ends(git_repo, commit):
         commit,
         head=HEAD_CONTENT,
         worktree="NEW\n" + HEAD_CONTENT,
-        new_line=3,
+        new_line=new_line,
         line_range=line_range,
     )
     reanchor.reanchor_all(git_repo, review)

@@ -9,7 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mrq import gitcmd, linemap, model, search
+from mrq import anchor, gitcmd, linemap, model, search
 
 MR_HEAD_REFSPEC = "refs/merge-requests/{iid}/head"
 
@@ -131,12 +131,13 @@ def _locate(context: _Context, thread: model.Thread) -> model.Location:
     if lines is None:
         return stale
 
+    # 범위가 있으면 시작 줄은 position 이 아니라 line_range.start 다 — position
+    # 쪽 값은 범위의 어느 쪽이든 될 수 있다 (anchor.start_line 의 주석).
+    head_start = anchor.start_line(position)
     if position.new_line is not None:
-        found = _locate_new_side(
-            context, thread, source_path, current_path, lines, position.new_line
-        )
+        found = _locate_new_side(context, thread, source_path, current_path, lines, head_start)
     else:
-        found = _locate_old_side(thread, lines, position.old_line)
+        found = _locate_old_side(thread, lines, head_start)
 
     if found is None:
         return stale
@@ -146,7 +147,7 @@ def _locate(context: _Context, thread: model.Thread) -> model.Location:
     end_head_line = _range_end(position)
     if end_head_line is not None:
         line_end = _locate_range_end(
-            context, source_path, current_path, lines, position.new_line, end_head_line, line
+            context, source_path, current_path, lines, head_start, end_head_line, line
         )
         # start 와 end 는 서로 다른 메커니즘(git 매핑 vs 문자열 탐색)으로
         # 구해지므로 순서가 보장되지 않는다. 역전된 end 는 "찾지 못함"과
@@ -241,5 +242,11 @@ def _locate_range_end(
 
 
 def _range_end(position: model.Position) -> int | None:
+    """범위의 끝 줄. 코멘트가 붙은 쪽의 끝점만 쓴다.
+
+    범위가 old/new 양쪽에 걸쳐 있으면 그 쪽 끝점이 비어 있다. 그때는 None 을
+    돌려 §5.4 의 강등 규칙(`line_end: null` + `fuzzy`)으로 떨어뜨린다 —
+    반대쪽 좌표계의 줄 번호를 끝으로 쓰면 그럴듯한 틀린 범위가 된다.
+    """
     end = (position.line_range or {}).get("end") or {}
-    return end.get("new_line") if position.new_line is not None else None
+    return end.get("new_line") if position.new_line is not None else end.get("old_line")

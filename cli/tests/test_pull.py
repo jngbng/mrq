@@ -61,8 +61,8 @@ def test_pull_writes_validated_review_json(pullable, capsys):
     assert review.project == "group/sub/project"
     assert review.me.can_resolve is True
     assert review.capabilities.draft_notes is True
-    # 8개 discussion 중 system 전용 1개(00ff00ff00ff)가 빠진다.
-    assert len(review.threads) == 7
+    # 9개 discussion 중 system 전용 1개(00ff00ff00ff)가 빠진다.
+    assert len(review.threads) == 8
 
 
 def test_pull_prints_summary(pullable, capsys):
@@ -74,8 +74,8 @@ def test_pull_prints_summary(pullable, capsys):
     # 픽스처에는 서버에서 이미 resolve 된 스레드가 하나(33445566ccdd) 있다.
     # 그 숫자를 len(threads) 로 바꿔치기해도 테스트가 통과하면 안 된다 —
     # unresolved 는 threads 와 달라야 그 치환을 잡을 수 있다.
-    assert "threads 7" in out
-    assert "unresolved 6" in out
+    assert "threads 8" in out
+    assert "unresolved 7" in out
 
 
 def test_pull_locates_diff_comment_in_worktree(pullable):
@@ -85,6 +85,22 @@ def test_pull_locates_diff_comment_in_worktree(pullable):
     assert thread.location.path == "src/api/client.py"
     assert thread.location.line == 3
     assert thread.location.confidence == "exact"
+
+
+def test_pull_spans_multiline_range_regardless_of_new_line_side(pullable):
+    # 픽스처에 같은 범위(2~3)를 가리키는 두 모양이 있다 — new_line 이 범위의
+    # 시작인 것(11223344aabb)과 끝인 것(55667788eeff). GitLab 이 보낸 값을
+    # 정규화하지 않으므로 둘 다 들어온다 (MR !1 실측).
+    main(["pull"])
+    review = read_review(pullable)
+    at_start = next(t for t in review.threads if t.id == "11223344aabb")
+    at_end = next(t for t in review.threads if t.id == "55667788eeff")
+
+    for thread in (at_start, at_end):
+        assert (thread.location.line, thread.location.line_end) == (2, 3)
+        assert thread.location.confidence == "exact"
+        # 앵커는 끝 줄이 아니라 시작 줄의 내용이다.
+        assert thread.anchor.line == "    session = make_session()"
 
 
 def test_pull_gives_null_location_to_general_and_image(pullable):
@@ -251,7 +267,7 @@ def test_reanchor_json_emits_only_json_on_stdout(pullable, capsys):
     out = capsys.readouterr().out
     # 텍스트 position 을 가진 스레드 4개(a1b2c3d4e5f6, 11223344aabb,
     # 22334455bbcc, 33445566ccdd) 모두 작업 트리를 건드리지 않았으므로 exact다.
-    assert json.loads(out) == {"anchors": {"exact": 4, "fuzzy": 0, "stale": 0}}
+    assert json.loads(out) == {"anchors": {"exact": 5, "fuzzy": 0, "stale": 0}}
 
 
 def test_reanchor_never_fetches(pullable, monkeypatch, capsys):
@@ -306,7 +322,7 @@ def test_pull_recovers_from_corrupt_json(pullable, capsys):
     assert main(["pull"]) == 0
     store.review_json_path(pullable, 1234).write_text("{not json", encoding="utf-8")
     assert main(["pull"]) == 0
-    assert len(read_review(pullable).threads) == 7
+    assert len(read_review(pullable).threads) == 8
 
 
 def test_pull_recovers_from_malformed_push_error(pullable, capsys):

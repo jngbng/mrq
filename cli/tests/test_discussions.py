@@ -199,5 +199,5 @@ def test_fixture_file_produces_expected_thread_count():
         if line.strip()
     ]
     threads = discussions.to_threads(raw, "bongya")
-    # 8개 discussion 중 1개(00ff00ff00ff)는 system 노트만 있어 제외된다.
-    assert len(threads) == 7
+    # 9개 discussion 중 1개(00ff00ff00ff)는 system 노트만 있어 제외된다.
+    assert len(threads) == 8

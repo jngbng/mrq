@@ -179,3 +179,45 @@ def test_hunk_for_renamed_file_is_compact(git_repo, commit):
     assert "+L1" not in result.hunk
     # "새 파일" 헤더면 @@ -0,0 이다
     assert "@@ -0,0" not in result.hunk
+
+
+# GitLab 은 position.new_line 을 범위의 어느 쪽으로도 보낸다 (MR !1 실측:
+# 같은 범위 14~18 에 new_line 18 인 스레드와 14 인 스레드가 함께 있다).
+# line_range 가 있으면 앵커는 언제나 시작 줄이다 (reanchoring.md §5.4).
+RANGE_3_TO_7 = {
+    "start": {"line_code": "x_2_3", "type": "new", "old_line": None, "new_line": 3},
+    "end": {"line_code": "x_6_7", "type": "new", "old_line": None, "new_line": 7},
+}
+
+
+def test_extract_anchors_on_range_start_when_new_line_is_range_end(git_repo, commit):
+    sha = commit({"a.py": TEN_LINES})
+    position = text_position(new_line=7, line_range=RANGE_3_TO_7)
+    result = anchor.extract(git_repo, refs_for(git_repo, sha, sha), position)
+    assert result.line == "L3"
+    assert result.context_before == ["L1", "L2"]
+    assert result.context_after == ["L4", "L5", "L6"]
+
+
+def test_extract_anchor_is_identical_for_both_range_shapes(git_repo, commit):
+    sha = commit({"a.py": TEN_LINES})
+    refs = refs_for(git_repo, sha, sha)
+    at_start = anchor.extract(git_repo, refs, text_position(new_line=3, line_range=RANGE_3_TO_7))
+    at_end = anchor.extract(git_repo, refs, text_position(new_line=7, line_range=RANGE_3_TO_7))
+    assert at_start == at_end
+
+
+def test_extract_anchors_on_old_side_range_start(git_repo, commit):
+    # old-side 범위는 MR !1 에 실물이 없다. 규범(§5.4)이 양쪽을 대칭으로
+    # 요구하므로 삭제된 줄 쪽도 시작 줄을 앵커로 쓴다.
+    sha = commit({"a.py": TEN_LINES})
+    position = text_position(
+        new_line=None,
+        old_line=7,
+        line_range={
+            "start": {"line_code": "x_3_0", "type": "old", "old_line": 3, "new_line": None},
+            "end": {"line_code": "x_7_0", "type": "old", "old_line": 7, "new_line": None},
+        },
+    )
+    result = anchor.extract(git_repo, refs_for(git_repo, sha, sha), position)
+    assert result.line == "L3"

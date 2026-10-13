@@ -36,17 +36,38 @@ def read_lines(root: Path, rev: str, path: str) -> list[str] | None:
     return lines
 
 
+def start_line(position: model.Position) -> int | None:
+    """코멘트가 가리키는 **시작** 줄 (reanchoring.md §5.4).
+
+    `position.new_line`/`old_line` 은 범위의 어느 쪽이든 될 수 있다 — GitLab 은
+    보낸 값을 정규화하지 않고 그대로 저장한다 (MR !1 실측: 같은 범위 14~18 에
+    `new_line` 이 18 인 스레드와 14 인 스레드가 함께 있다). 범위가 있으면
+    `line_range.start` 가 유일하게 믿을 수 있는 시작 줄이다.
+
+    코멘트가 붙은 쪽을 따라간다 — `new_line` 이 있으면 new side, 없으면 old side.
+    범위가 두 쪽에 걸쳐 있어 그 쪽 끝점이 비어 있으면 `position` 값으로 되돌아간다.
+    """
+    own_line = position.new_line if position.new_line is not None else position.old_line
+    start = (position.line_range or {}).get("start") or {}
+    key = "new_line" if position.new_line is not None else "old_line"
+    return start.get(key) or own_line
+
+
 def extract(
     root: Path, diff_refs: model.DiffRefs, position: model.Position | None
 ) -> model.Anchor | None:
     if position is None or position.position_type != "text":
         return None
 
+    line_no = start_line(position)
+    if line_no is None:
+        return None
+
     if position.new_line is not None:
-        rev, path, line_no = diff_refs.head_sha, position.new_path, position.new_line
+        rev, path = diff_refs.head_sha, position.new_path
     elif position.old_line is not None:
         # 삭제된 줄은 head_sha 에 없다. start_sha 에서 읽는다.
-        rev, path, line_no = diff_refs.start_sha, position.old_path, position.old_line
+        rev, path = diff_refs.start_sha, position.old_path
     else:
         return None
 
@@ -86,8 +107,10 @@ def hunk_for(root: Path, diff_refs: model.DiffRefs, position: model.Position) ->
     if out is None:
         return None
 
+    # 앵커와 같은 줄을 기준으로 고른다. 범위의 끝으로 고르면 시작 줄이 다른
+    # hunk 에 있을 때 앵커가 담기지 않은 hunk 를 붙이게 된다.
     use_new = position.new_line is not None
-    target = position.new_line if use_new else position.old_line
+    target = start_line(position)
     if target is None:
         return None
 
