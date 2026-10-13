@@ -71,7 +71,7 @@ mrq/
 | `render.py` | `review.json` → `review.md` 문자열. 파일을 만지지 않는다. `v:` 해시 정규형의 유일한 정의 | `render`, `vhash`, `normalize_reply`, `order`, `visible`, `header_line` |
 | `mdparse.py` | `review.md` → 블록·경고·에러. fence 를 추적한다. 파일을 만지지 않고 예외를 올리지 않는다 | `FileMeta`, `Block`, `Message`, `Parsed`, `parse`, `ANCHOR_RE` |
 | `surface.py` | 정본 json + 편집면 md 를 함께 갱신하는 유일한 지점 | `now`, `write` |
-| `model.py` | `review.json` 데이터 클래스 + 직렬화 + 스키마 검증 | `Review`, `Thread`, `Server`, `Position`, `Anchor`, `Location`, `Local`, `Note`, `Me`, `Capabilities`, `DiffRefs`, `schema_path`, `validate`, `check_version`, `dumps`, `loads` |
+| `model.py` | `review.json` 데이터 클래스 + 직렬화 + 스키마 검증 | `Review`, `Thread`, `Server`, `Position`, `Anchor`, `Location`, `Local`, `Note`, `Me`, `Capabilities`, `DiffRefs`, `schema_path`, `validate`, `check_version`, `dumps`, `loads`, `read_threads` |
 | `mr.py` | MR 탐지와 메타데이터 | `PROJECT`, `MrInfo`, `detect`, `project_info`, `diff_refs`, `whoami`, `draft_notes_available`, `current_branch` |
 | `discussions.py` | discussions 응답 → `Thread`. 시스템 노트 필터와 파생 필드 | `fetch`, `to_threads` |
 | `linemap.py` | git diff 기반 경로 맵 / 라인 맵 | `PathMap`, `path_map`, `LineMap`, `line_map` |

@@ -748,7 +748,7 @@ GitLab UI에서 확인해야 하는 경우(이미지 코멘트, 개별 노트, �
 ```
 $ mrq doctor
 glab          ✓ v1.58.0
-glab auth     ✓ bongya (id 1984979)
+glab auth     ✓ bongya (id 42)
 remote        ✓ origin → group/sub/project
 MR            ✓ !1234 (source_branch feat/retry)
 head_sha      ✓ abc1234 (로컬에 있음)
