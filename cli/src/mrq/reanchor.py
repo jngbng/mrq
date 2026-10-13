@@ -108,6 +108,13 @@ def reanchor_all(root: Path, review: model.Review, *, have_git: bool = True) -> 
             thread.location = None
             continue
         thread.location = _locate(context, thread)
+        if thread.server.missing:
+            # 서버 응답에서 사라졌지만 미전송 작업이 있어 보존한 스레드다
+            # (data-model.md §4.10). 위치는 계속 채운다 — 사용자가 답글을 옮길
+            # 곳을 찾는 데 쓰인다. 하지만 통계가 재는 것은 "현재 서버가 돌려준
+            # 활성 코멘트를 얼마나 잘 재배치했는가"이고 이 스레드는 그 모집단이
+            # 아니므로 섞으면 품질 게이트(reanchoring.md §8)가 조용히 낮아진다.
+            continue
         stats.count(thread.location.confidence)
     return stats
 

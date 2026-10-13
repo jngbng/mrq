@@ -26,7 +26,15 @@ def status_payload(review: model.Review) -> dict:
 
     for thread in threads:
         local[thread.local.state] += 1
-        if thread.location is not None and thread.location.confidence in anchors:
+        # server.missing 스레드는 재앵커링 통계와 같은 이유로 제외한다 — 사라진
+        # 스레드의 위치 품질은 "현재 활성 코멘트를 얼마나 잘 찾았는가"를 재는
+        # 이 지표의 모집단이 아니다 (data-model.md §4.9). threads/local 집계는
+        # 모든 스레드를 그대로 센다 — 거기엔 이 제외가 적용되지 않는다.
+        if (
+            not thread.server.missing
+            and thread.location is not None
+            and thread.location.confidence in anchors
+        ):
             anchors[thread.location.confidence] += 1
 
         pending_reply = bool(thread.local.reply.strip()) and thread.local.state in (

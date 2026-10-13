@@ -210,6 +210,138 @@ def test_pull_clears_missing_when_the_thread_comes_back(pullable, glab):
     assert next(t for t in review.threads if t.id == "a1b2c3d4e5f6").server.missing is False
 
 
+def test_pull_keeps_a_vanished_thread_with_nondefault_state_and_no_reply(pullable, glab):
+    # "미전송 작업" 은 `local.reply` 가 있는 경우 **또는** `state != todo` 인
+    # 경우다 — 기존 테스트는 둘 다 채운 조합만 다뤘다. `state="skipped"` 처럼
+    # reply 없이 state 만 바뀐 쪽도 보존되어야 한다.
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    review = read_review(pullable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "skipped"
+    store.atomic_write_text(path, model.dumps(review))
+
+    remaining = [
+        line
+        for line in (FIXTURES / "discussions.ndjson").read_text(encoding="utf-8").splitlines()
+        if "a1b2c3d4e5f6" not in line
+    ]
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=["\n".join(remaining) + "\n"],
+    )
+
+    assert main(["pull"]) == 0
+
+    kept = next((t for t in read_review(pullable).threads if t.id == "a1b2c3d4e5f6"), None)
+    assert kept is not None, "reply 없이 state 만 바뀐 스레드도 보존돼야 한다"
+    assert kept.server.missing is True
+    assert kept.local.state == "skipped"
+    assert kept.local.reply == ""
+
+
+def test_pull_abandons_preservation_for_a_vanishing_thread_when_json_is_corrupt(pullable, glab):
+    # 미전송 작업이 있었을 스레드가 응답에서도 사라지는 동시에 직전 json 이
+    # 통째로 깨진 경우다. `read_threads` 는 파싱조차 못 하므로 server/position/
+    # notes 를 복원할 근거가 없다 — 보존을 포기해야 하고, 그 포기가 크래시나
+    # 부분 적용 없이 끝나야 한다(Task 2 review Finding 2).
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    path.write_text("{not json", encoding="utf-8")
+
+    remaining = [
+        line
+        for line in (FIXTURES / "discussions.ndjson").read_text(encoding="utf-8").splitlines()
+        if "a1b2c3d4e5f6" not in line
+    ]
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=["\n".join(remaining) + "\n"],
+    )
+
+    assert main(["pull"]) == 0
+    review = read_review(pullable)  # model.loads 가 여기서 검증한다 — 실패하면 raise.
+    assert all(t.id != "a1b2c3d4e5f6" for t in review.threads)
+
+
+def test_pull_abandons_preservation_for_a_vanishing_thread_on_older_schema(pullable, glab):
+    # 같은 상황을 구버전 schema_version 으로도 확인한다 — json 은 파싱되지만
+    # `read_threads` 가 버전 불일치로 포기하는 경로다.
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    review = read_review(pullable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "done"
+    target.local.reply = "구버전이라 보존 못 한다"
+    store.atomic_write_text(path, model.dumps(review))
+    text = path.read_text(encoding="utf-8").replace('"schema_version": 1', '"schema_version": 0', 1)
+    path.write_text(text, encoding="utf-8")
+
+    remaining = [
+        line
+        for line in (FIXTURES / "discussions.ndjson").read_text(encoding="utf-8").splitlines()
+        if "a1b2c3d4e5f6" not in line
+    ]
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=["\n".join(remaining) + "\n"],
+    )
+
+    assert main(["pull"]) == 0
+    review = read_review(pullable)  # 스키마 검증 통과를 확인한다.
+    assert all(t.id != "a1b2c3d4e5f6" for t in review.threads)
+
+
+def test_pull_excludes_a_preserved_thread_from_reanchor_stats(pullable, glab, capsys):
+    # a1b2c3d4e5f6 는 git-diff 로 exact 위치를 찾는 표본 스레드다. 서버에서
+    # 사라져 보존되어도 위치는 계속 채워지지만(§4.10), "reanchored: ..." 줄의
+    # exact/fuzzy/stale 집계에는 들어가면 안 된다 — 그 지표가 재는 것은 지금
+    # 서버가 돌려준 활성 코멘트의 재배치 품질이다 (data-model.md §4.9). 그
+    # 스레드가 활성 응답에서 빠진 만큼 exact 가 정확히 하나 줄어야 하고, 그
+    # 이상(보존된 스레드가 통계에 다시 섞여 줄지 않는 일) 은 없어야 한다.
+    assert main(["pull"]) == 0
+    baseline_exact = int(
+        next(
+            line for line in capsys.readouterr().out.splitlines() if line.startswith("reanchored:")
+        )
+        .split("exact ")[1]
+        .split(" ")[0]
+    )
+
+    path = store.review_json_path(pullable, 1234)
+    review = read_review(pullable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "done"
+    target.local.reply = "보내야 하는 답글"
+    store.atomic_write_text(path, model.dumps(review))
+
+    remaining = [
+        line
+        for line in (FIXTURES / "discussions.ndjson").read_text(encoding="utf-8").splitlines()
+        if "a1b2c3d4e5f6" not in line
+    ]
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=["\n".join(remaining) + "\n"],
+    )
+
+    assert main(["pull"]) == 0
+    after_exact = int(
+        next(
+            line for line in capsys.readouterr().out.splitlines() if line.startswith("reanchored:")
+        )
+        .split("exact ")[1]
+        .split(" ")[0]
+    )
+
+    kept = next(t for t in read_review(pullable).threads if t.id == "a1b2c3d4e5f6")
+    assert kept.server.missing is True
+    # 위치는 계속 exact 로 계산됐지만 통계에는 포함되지 않았다 — 포함됐다면
+    # after_exact 가 baseline_exact 와 같았을 것이다.
+    assert kept.location is not None and kept.location.confidence == "exact"
+    assert after_exact == baseline_exact - 1
+
+
 def test_pull_keeps_previous_anchor_when_head_unavailable(pullable, glab):
     # head_sha 를 로컬에서 확보할 수 없으면 git show 가 모든 스레드에서
     # 실패해 anchor.extract 가 None 을 돌려준다. FIX 2 이전 코드는 그 None 을

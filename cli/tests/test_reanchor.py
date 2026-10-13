@@ -84,6 +84,18 @@ def test_insert_above_shifts_location(git_repo, commit):
     assert stats.as_dict() == {"exact": 1, "fuzzy": 0, "stale": 0}
 
 
+# 서버 응답에서 사라졌지만 미전송 작업이 있어 보존된 스레드 (§4.10)
+def test_missing_thread_is_located_but_excluded_from_stats(git_repo, commit):
+    # 위치는 계속 채운다 — 사용자가 답글을 옮길 곳을 찾는 데 쓰인다. 하지만
+    # 통계는 "서버가 지금 돌려준 활성 코멘트를 얼마나 잘 재배치했는가"를 재므로
+    # 사라진 스레드를 섞으면 품질 게이트가 조용히 낮아진다 (data-model.md §4.9).
+    review, thread = scenario(git_repo, commit, head=HEAD_CONTENT, worktree=HEAD_CONTENT)
+    thread.server.missing = True
+    stats = reanchor.reanchor_all(git_repo, review)
+    assert (thread.location.line, thread.location.confidence) == (3, "exact")
+    assert stats.as_dict() == {"exact": 0, "fuzzy": 0, "stale": 0}
+
+
 # 2. 앵커 줄 아래에 줄 삽입
 def test_insert_below_keeps_location(git_repo, commit):
     review, thread = scenario(

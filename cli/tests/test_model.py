@@ -250,3 +250,13 @@ def test_read_previous_drops_invalid_push_error_but_dumps_still_succeeds():
     # 가 스키마를 어긴 채로 넘어갔다는 뜻이다.
     roundtripped = model.loads(model.dumps(review))
     assert roundtripped.threads[0].local.push_error is None
+
+
+def test_read_threads_gives_up_on_corrupt_or_older_schema_json():
+    # §4.10 보존은 검증을 통과하는 현재 스키마 json 에서만 가능하다 —
+    # server/position/notes 를 통째로 복원할 근거가 없으면 포기한다
+    # (`read_previous` 와 다른 지점: 그것은 `local`/`anchor` 만 최선 노력으로
+    # 건지지만, `read_threads` 는 스레드 전체가 필요해서 반쪽짜리를 안 받는다).
+    assert model.read_threads("{not json") == {}
+    older = _minimal_text().replace('"schema_version": 1', '"schema_version": 0', 1)
+    assert model.read_threads(older) == {}

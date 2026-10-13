@@ -287,6 +287,11 @@ GitLab 응답의 `suggestions` 배열을 변형 없이 보관해야 한다(MUST)
 `location: null`인 스레드는 재앵커링 통계(`exact`/`fuzzy`/`stale`)에서 제외한다(MUST).
 에디터는 진단을 만들지 않는다.
 
+`location` 이 null 인 스레드 외에 `server.missing == true`인 스레드도 재앵커링
+통계에서 제외한다(MUST) — `location`은 계속 채우지만(사용자가 답글을 옮길 곳을
+찾아야 한다), 통계가 재는 것은 서버가 지금 돌려준 활성 코멘트를 얼마나 잘
+재배치했는가이고 사라진 스레드는 그 모집단이 아니다(§4.10).
+
 ### 4.10 `server.missing` — 응답에서 사라진 스레드
 
 `pull`은 서버 응답에 없는 스레드를 제거한다. 다만 **`local.reply`가 비어 있지

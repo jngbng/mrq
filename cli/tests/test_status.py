@@ -42,6 +42,20 @@ def test_payload_excludes_null_location_from_anchor_stats():
     assert sum(payload["anchors"].values()) == 6
 
 
+def test_payload_excludes_server_missing_from_anchor_stats():
+    # a1b2c3d4e5f6 는 표본에서 location 이 null 이 아닌 스레드다. server.missing
+    # 으로 표시해도 threads/local 집계는 그대로 7 을 세지만 (§4.9 는 anchors 에만
+    # 적용된다), anchors 에서는 하나 빠져야 한다 — 사라진 스레드의 위치 품질은
+    # "현재 활성 코멘트 재배치" 지표의 모집단이 아니다.
+    review = _review()
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.server.missing = True
+    payload = report.status_payload(review)
+    assert sum(payload["anchors"].values()) == 5
+    assert payload["threads"]["total"] == 7
+    assert sum(payload["local"].values()) == 7
+
+
 def test_payload_counts_pending_reply_and_resolve():
     review = _review()
     target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
