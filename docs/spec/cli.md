@@ -10,7 +10,7 @@
 mrq pull     [--mr IID] [--all] [--no-render] [--render]
 mrq sync     [--json] [--prefer md|json] [--thread ID]...
 mrq status   [--json]
-mrq push     [--dry-run] [--force] [--draft] [--publish]
+mrq push     [--json] [--dry-run] [--force] [--draft] [--publish]
              [--resolve auto|skip|require]
 mrq reanchor [--json]
 mrq reply    <thread> (-m MSG | -F FILE | -F -) [--state STATE]
