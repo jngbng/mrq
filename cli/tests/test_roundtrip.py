@@ -10,8 +10,7 @@ import pytest
 from hypothesis import HealthCheck, given, settings
 from hypothesis import strategies as st
 
-from mrq import mdparse, model, render
-from mrq.commands import sync as sync_command
+from mrq import mdparse, mdsync, model, render
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
 
@@ -153,7 +152,7 @@ def test_unbalanced_fence_in_a_reply_is_reported_not_silently_swallowed(fragment
 
     parsed = mdparse.parse(render.render(review, include_resolved=True))
     # 판정은 생산 코드 그대로 쓴다 — 테스트가 규칙을 복사하면 둘이 갈라진다.
-    escalated = sync_command._swallowed_anchor_errors(review, parsed)
+    escalated = mdsync._swallowed_anchor_errors(review, parsed)
 
     assert parsed.errors or escalated, "닫히지 않은 펜스가 조용히 지나갔다"
     if position == 0:
