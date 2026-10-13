@@ -6,7 +6,7 @@ import shutil
 import sys
 
 from mrq import glab, model, prompt, store
-from mrq.errors import MrqError
+from mrq.errors import MrqError, UsageError
 from mrq.mr import PROJECT
 
 
@@ -57,20 +57,33 @@ def run(args) -> int:
         # `_unsent`를 다시 확인한다 — 늘어났으면 스캔 때 보지 못한 작업이
         # 생긴 것이므로 지우지 않는다. flock 을 쥔 파일을 그 안에서
         # unlink 해도 POSIX 에서는 안전하다 — 커널이 fd 를 닫을 때 놓는다.
-        with store.review_lock(root, iid):
-            recheck = _unsent(root, iid)
-            if recheck > unsent:
-                print(
-                    f"⚠ !{iid} 에 스캔 이후 새로운 미전송 작업이 생겨 건너뜁니다 "
-                    f"({unsent}→{recheck}건). 다시 실행해 확인하세요.",
-                    file=sys.stderr,
-                )
-                continue
-            try:
-                shutil.rmtree(store.review_dir(root, iid))
-            except OSError as exc:
-                print(f"⚠ !{iid} 를 제거하지 못했습니다 ({exc}) — 건너뜁니다.", file=sys.stderr)
-                continue
+        #
+        # Important 5 — `store.review_lock`은 경쟁(다른 mrq 가 실행 중)이면
+        # `UsageError`를 던진다. 루프 안에 `try`가 없으면 그 예외가 `run`
+        # 밖으로 그대로 빠져나가 — 이미 지운 앞선 대상의 삭제는 되돌릴 수
+        # 없는데 `removed: N개` 줄은 찍히지 않고 종료 코드도 실패가 된다.
+        # 이 루프의 다른 모든 대상별 실패(재확인 증가, rmtree OSError)와
+        # 같게 건너뛰고 계속한다.
+        try:
+            with store.review_lock(root, iid):
+                recheck = _unsent(root, iid)
+                if recheck > unsent:
+                    print(
+                        f"⚠ !{iid} 에 스캔 이후 새로운 미전송 작업이 생겨 건너뜁니다 "
+                        f"({unsent}→{recheck}건). 다시 실행해 확인하세요.",
+                        file=sys.stderr,
+                    )
+                    continue
+                try:
+                    shutil.rmtree(store.review_dir(root, iid))
+                except OSError as exc:
+                    print(
+                        f"⚠ !{iid} 를 제거하지 못했습니다 ({exc}) — 건너뜁니다.", file=sys.stderr
+                    )
+                    continue
+        except UsageError as exc:
+            print(f"⚠ !{iid} 의 락을 얻지 못해 건너뜁니다 ({exc}).", file=sys.stderr)
+            continue
         if iid == current:
             # 끊어진 심링크를 남기지 않는다(MUST).
             store.clear_current(root)

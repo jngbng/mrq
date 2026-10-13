@@ -186,6 +186,53 @@ def test_clean_continues_after_one_target_fails_to_remove(
     assert "1234" in capsys.readouterr().err
 
 
+def test_clean_continues_after_lock_contention_on_one_target(
+    git_repo, commit, checkout, glab, monkeypatch, capsys
+):
+    # Important 5 — `store.review_lock`은 경쟁 시 `UsageError`를 던진다.
+    # 루프 안에 `try`가 없으면 그 예외가 `run` 밖으로 그대로 빠져나가 —
+    # 이미 지운 앞선 대상의 삭제는 그대로 남지만 `removed: N개` 줄은 찍히지
+    # 않고 종료 코드도 1이 된다. 되돌릴 수 없는 명령에서 "일부는 지워졌는데
+    # 실패로 보인다"는 틀린 신호다 — 다른 모든 대상별 실패처럼 건너뛰고
+    # 계속해야 한다.
+    commit({"src/api/client.py": "x\n"})
+    checkout("feat/retry")
+    monkeypatch.chdir(git_repo)
+    _place(git_repo, 1000)
+    _place(git_repo, 2000)
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1000",
+        {"iid": 1000, "title": "t", "web_url": "u", "state": "merged", "source_branch": "a"},
+    )
+    glab.route(
+        "GET projects/:fullpath/merge_requests/2000",
+        {"iid": 2000, "title": "t", "web_url": "u", "state": "merged", "source_branch": "b"},
+    )
+
+    from contextlib import contextmanager
+
+    from mrq.errors import UsageError
+
+    original_lock = clean_command.store.review_lock
+
+    @contextmanager
+    def flaky_lock(root, iid):
+        if iid == 2000:
+            raise UsageError(f".mrq/{iid}/lock 락을 얻지 못했습니다 (테스트)")
+        with original_lock(root, iid):
+            yield
+
+    monkeypatch.setattr(clean_command.store, "review_lock", flaky_lock)
+
+    assert main(["clean", "--merged"]) == 0
+
+    assert not store.review_dir(git_repo, 1000).exists()
+    assert store.review_dir(git_repo, 2000).exists()
+    captured = capsys.readouterr()
+    assert "2000" in captured.err
+    assert "removed: 1개" in captured.out
+
+
 def test_clean_warns_on_malformed_iid_directories(
     git_repo, commit, checkout, glab, monkeypatch, capsys
 ):
