@@ -80,17 +80,60 @@ def glab(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
 
     class Harness:
         def __init__(self) -> None:
-            self.routes: dict[str, str] = {}
+            self.routes: dict[str, list[dict]] = {}
+            self._files = 0
 
-        def route(self, key: str, payload=None, *, raw: str | None = None) -> None:
-            """`"GET projects/:fullpath/user"` 같은 키에 응답을 등록한다."""
-            name = f"r{len(self.routes)}.json"
-            text = raw if raw is not None else json.dumps(payload, ensure_ascii=False)
+        def _store(self, text: str) -> str:
+            # 파일 이름을 전역 카운터로 뽑는다. len(self.routes) 를 쓰면 같은
+            # 키를 다시 등록할 때 이전 파일을 덮어쓴다.
+            name = f"r{self._files}.json"
+            self._files += 1
             (fixtures / name).write_text(text, encoding="utf-8")
-            self.routes[key] = name
+            return name
+
+        def _response(self, payload, raw, status, pages) -> dict:
+            response: dict = {"status": status}
+            if pages is not None:
+                response["pages"] = [self._store(text) for text in pages]
+            elif raw is not None:
+                response["file"] = self._store(raw)
+            elif payload is not None:
+                # `[]` 와 `{}` 도 유효한 응답이다. 참/거짓으로 보면 안 된다.
+                response["file"] = self._store(json.dumps(payload, ensure_ascii=False))
+            else:
+                response["body"] = ""
+            return response
+
+        def _flush(self) -> None:
             (fixtures / "routes.json").write_text(
                 json.dumps(self.routes, ensure_ascii=False), encoding="utf-8"
             )
+
+        def route(
+            self,
+            key: str,
+            payload=None,
+            *,
+            raw: str | None = None,
+            status: int = 200,
+            pages: list[str] | None = None,
+        ) -> None:
+            """`"GET projects/:fullpath/user"` 같은 키에 응답 하나를 등록한다."""
+            self.routes[key] = [self._response(payload, raw, status, pages)]
+            self._flush()
+
+        def route_seq(self, key: str, responses: list[dict]) -> None:
+            """호출 순서대로 소비될 응답 목록. 소진되면 마지막 것이 반복된다."""
+            self.routes[key] = [
+                self._response(
+                    item.get("payload"),
+                    item.get("raw"),
+                    item.get("status", 200),
+                    item.get("pages"),
+                )
+                for item in responses
+            ]
+            self._flush()
 
         def fail_at(self, *indices: int) -> None:
             monkeypatch.setenv("MRQ_GLAB_FAIL_AT", ",".join(str(i) for i in indices))

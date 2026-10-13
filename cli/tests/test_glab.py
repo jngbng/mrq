@@ -72,3 +72,30 @@ def test_fail_at_simulates_crash(glab):
 def test_empty_response_is_none(glab):
     glab.route("GET nothing", raw="")
     assert glab_mod.api("nothing") is None
+
+
+def test_route_seq_returns_a_different_response_per_call(glab):
+    glab.route_seq("GET user", [{"payload": {"id": 1}}, {"payload": {"id": 2}}])
+    assert glab_mod.api("user") == {"id": 1}
+    assert glab_mod.api("user") == {"id": 2}
+
+
+def test_route_seq_repeats_the_last_response_when_exhausted(glab):
+    # 크래시 복구 테스트가 같은 명령을 재실행한다. 목록이 소진되면 마지막
+    # 응답이 반복되어야 한다 — 소진을 에러로 만들면 재실행이 하네스 때문에
+    # 실패한다.
+    glab.route_seq("GET user", [{"payload": {"id": 1}}, {"payload": {"id": 2}}])
+    glab_mod.api("user")
+    glab_mod.api("user")
+    assert glab_mod.api("user") == {"id": 2}
+    assert glab_mod.api("user") == {"id": 2}
+
+
+def test_route_seq_counts_calls_per_route_not_globally(glab):
+    # 다른 경로의 호출이 끼어들어도 순서가 밀리면 안 된다. pull 은 한 번에
+    # 대여섯 경로를 부른다.
+    glab.route_seq("GET user", [{"payload": {"id": 1}}, {"payload": {"id": 2}}])
+    glab.route("GET other", {"ok": True})
+    assert glab_mod.api("user") == {"id": 1}
+    glab_mod.api("other")
+    assert glab_mod.api("user") == {"id": 2}

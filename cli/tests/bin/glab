@@ -6,6 +6,13 @@
   MRQ_GLAB_LOG       호출 기록 (JSON Lines: {"argv": [...], "stdin": "..."})
   MRQ_GLAB_FAIL_AT   N 번째 호출에서 exit 1 (1-indexed, 콤마 구분)
 
+`routes.json` 은 `"<METHOD> <path>"` 마다 **응답 목록** 을 담는다. 그 키로 들어온
+호출의 순서대로 소비하고, 목록이 소진되면 마지막 것이 반복된다. 응답 하나는
+`{"status": 200, "file"|"body"|"pages": ...}` 다.
+
+`MRQ_GLAB_FAIL_AT` 으로 죽인 호출도 소비한 것으로 센다 — 로그에 남은 호출이
+기준이다. "요청은 갔는데 그 뒤에 죽었다" 가 크래시 복구가 다루는 모양이다.
+
 등록되지 않은 경로는 exit 1 이다. 조용히 통과시키면 테스트가 거짓으로 녹색이 된다.
 """
 
@@ -17,50 +24,78 @@ import sys
 from pathlib import Path
 
 
+def route_key(argv: list[str]) -> str:
+    method = "GET"
+    if "--method" in argv:
+        method = argv[argv.index("--method") + 1]
+    return f"{method} {argv[1]}"
+
+
+def _is_api_call(argv: list[str]) -> bool:
+    return argv[:1] == ["api"] and len(argv) >= 2
+
+
+def _body(fixtures: Path, response: dict) -> str:
+    if "file" in response:
+        return (fixtures / response["file"]).read_text(encoding="utf-8")
+    return response.get("body", "")
+
+
 def main() -> int:
     argv = sys.argv[1:]
 
     # `-F key=@-` 가 있을 때만 stdin 을 읽는다. 무조건 읽으면 상속된 stdin 에서 막힌다.
     stdin = sys.stdin.read() if any(arg.endswith("=@-") for arg in argv) else ""
 
-    index = 1
+    entries: list[dict] = []
     log = os.environ.get("MRQ_GLAB_LOG")
     if log:
         log_path = Path(log)
         if log_path.exists():
-            index = len(log_path.read_text(encoding="utf-8").splitlines()) + 1
+            entries = [
+                json.loads(line)
+                for line in log_path.read_text(encoding="utf-8").splitlines()
+                if line.strip()
+            ]
         with log_path.open("a", encoding="utf-8") as handle:
-            handle.write(
-                json.dumps({"argv": argv, "stdin": stdin}, ensure_ascii=False) + "\n"
-            )
+            handle.write(json.dumps({"argv": argv, "stdin": stdin}, ensure_ascii=False) + "\n")
 
     fail_at = {
         int(token)
         for token in os.environ.get("MRQ_GLAB_FAIL_AT", "").split(",")
         if token.strip()
     }
+    index = len(entries) + 1
     if index in fail_at:
         print(f"fake glab: 호출 {index} 에서 의도적으로 실패", file=sys.stderr)
         return 1
 
-    if argv[:1] != ["api"] or len(argv) < 2:
+    if not _is_api_call(argv):
         print(f"fake glab: 지원하지 않는 호출 {argv}", file=sys.stderr)
         return 1
 
-    method = "GET"
-    if "--method" in argv:
-        method = argv[argv.index("--method") + 1]
-    key = f"{method} {argv[1]}"
+    key = route_key(argv)
 
     fixtures = Path(os.environ["MRQ_GLAB_FIXTURES"])
     routes_path = fixtures / "routes.json"
     routes = json.loads(routes_path.read_text(encoding="utf-8")) if routes_path.exists() else {}
     if key not in routes:
         registered = "\n  ".join(sorted(routes)) or "(없음)"
-        print(f"fake glab: 등록되지 않은 경로 — {key}\n등록된 경로:\n  {registered}", file=sys.stderr)
+        print(
+            f"fake glab: 등록되지 않은 경로 — {key}\n등록된 경로:\n  {registered}",
+            file=sys.stderr,
+        )
         return 1
 
-    sys.stdout.write((fixtures / routes[key]).read_text(encoding="utf-8"))
+    # 같은 키로 들어온 이전 호출 수가 목록의 인덱스다. 경로별로 센다 —
+    # 전체 호출 수로 세면 다른 경로의 호출이 순서를 민다.
+    responses = routes[key]
+    seen = sum(
+        1 for entry in entries if _is_api_call(entry["argv"]) and route_key(entry["argv"]) == key
+    )
+    response = responses[min(seen, len(responses) - 1)]
+
+    sys.stdout.write(_body(fixtures, response))
     return 0
 
 
