@@ -42,6 +42,9 @@ class Server:
     repliable: bool
     updated_at: str
     note_count: int
+    # 응답에서 사라졌지만 미전송 작업이 있어 보존한 스레드 (§4.10). 기존 파일에는
+    # 키가 없으므로 기본값이 곧 "부재는 false" 규칙이다.
+    missing: bool = False
 
 
 @dataclass
@@ -380,3 +383,26 @@ def _salvage(data: dict, warnings: list[str]) -> dict[str, tuple[Local, Anchor |
             )
         out[thread_id] = (local, anchor)
     return out
+
+
+def read_threads(text: str) -> dict[str, Thread]:
+    """검증을 통과하는 json 에서만 스레드 **전체**를 돌려준다. 아니면 빈 dict.
+
+    `read_previous` 로는 할 수 없는 일이 있다 — 그것은 `local` 과 `anchor` 만
+    건지지만, 응답에서 사라진 스레드를 보존하려면 새 응답에 대응물이 없으므로
+    `server`·`position`·`notes` 까지 이전 것을 그대로 가져와야 한다 (§4.10).
+
+    손상·구버전 json 에서는 보존을 포기한다. 그 경로의 복구는 `read_previous`
+    의 최선 노력이고, 거기서 건진 `local` 은 붙일 스레드가 없으면 쓸 곳이 없다.
+    """
+    try:
+        data = json.loads(text)
+    except json.JSONDecodeError:
+        return {}
+    if not isinstance(data, dict) or data.get("schema_version") != SCHEMA_VERSION:
+        return {}
+    try:
+        validate(data)
+    except jsonschema.ValidationError:
+        return {}
+    return {thread.id: thread for thread in Review.from_dict(data).threads}

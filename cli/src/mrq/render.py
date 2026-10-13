@@ -82,6 +82,8 @@ def header_line(thread: model.Thread) -> str:
             badges.append(f"`{thread.location.confidence}`")
     if not thread.server.repliable:
         badges.append("`no-reply`")
+    if thread.server.missing:
+        badges.append("`server-missing`")
     suffix = "  " + " ".join(badges) if badges else ""
     return f"## [{_STATE_CHAR[thread.local.state]}] {where} — @{author}{suffix}"
 

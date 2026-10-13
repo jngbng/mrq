@@ -48,6 +48,8 @@ def run(args) -> int:
             else:
                 thread.anchor = extracted
 
+        threads = _carry_missing(root, info.iid, threads)
+
         review = model.Review(
             schema_version=SCHEMA_VERSION,
             project=project,
@@ -99,6 +101,32 @@ def _previous_rendered_at(root, iid: int) -> str | None:
     if not path.is_file():
         return None
     return model.peek_rendered_at(path.read_text(encoding="utf-8"))
+
+
+def _carry_missing(root, iid: int, threads: list[model.Thread]) -> list[model.Thread]:
+    """응답에서 사라진 스레드 중 미전송 작업이 있는 것을 보존한다 (§4.10).
+
+    미전송 작업이 없는 스레드는 그대로 제거한다 — 보존해서 표시할 로컬 상태가
+    없으므로 남기면 md 와 `status` 에 설명할 수 없는 항목이 쌓인다.
+    """
+    path = store.review_json_path(root, iid)
+    if not path.is_file():
+        return threads
+    present = {thread.id for thread in threads}
+    carried = []
+    for thread_id, previous in model.read_threads(path.read_text(encoding="utf-8")).items():
+        if thread_id in present:
+            continue
+        if not (previous.local.reply.strip() or previous.local.state != "todo"):
+            continue
+        previous.server.missing = True
+        carried.append(previous)
+        print(
+            f"⚠ {thread_id[:8]} 스레드가 서버 응답에서 사라졌습니다 — 미전송 작업이 "
+            "있어 보존합니다. `push` 는 전송하지 않으므로 답글을 직접 옮기세요.",
+            file=sys.stderr,
+        )
+    return threads + carried
 
 
 def _render_only(args) -> int:

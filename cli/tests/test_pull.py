@@ -162,6 +162,54 @@ def test_pull_drops_threads_removed_on_server(pullable, glab):
     assert [t.id for t in read_review(pullable).threads] == ["a1b2c3d4e5f6"]
 
 
+def test_pull_keeps_a_vanished_thread_that_has_unsent_work(pullable, glab, capsys):
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    review = read_review(pullable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "done"
+    target.local.reply = "보내야 하는 답글"
+    store.atomic_write_text(path, model.dumps(review))
+
+    # 서버 응답에서 그 스레드만 빠진다 (페이지 결손·권한 변경·실제 삭제가
+    # 응답만으로는 구분되지 않는다 — 결정 0011).
+    remaining = [
+        line
+        for line in (FIXTURES / "discussions.ndjson").read_text(encoding="utf-8").splitlines()
+        if "a1b2c3d4e5f6" not in line
+    ]
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=["\n".join(remaining) + "\n"],
+    )
+
+    assert main(["pull"]) == 0
+
+    review = read_review(pullable)
+    kept = next((t for t in review.threads if t.id == "a1b2c3d4e5f6"), None)
+    assert kept is not None, "미전송 답글이 있는 스레드가 사라졌다 — 복구 불가능한 손실이다"
+    assert kept.server.missing is True
+    assert kept.local.reply == "보내야 하는 답글"
+    assert kept.local.state == "done"
+    assert "사라졌습니다" in capsys.readouterr().err
+
+
+def test_pull_clears_missing_when_the_thread_comes_back(pullable, glab):
+    assert main(["pull"]) == 0
+    path = store.review_json_path(pullable, 1234)
+    review = read_review(pullable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "done"
+    target.server.missing = True
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["pull"]) == 0
+
+    # 표시가 남으면 멀쩡한 스레드가 영구히 전송 대상에서 빠진다(MUST).
+    review = read_review(pullable)
+    assert next(t for t in review.threads if t.id == "a1b2c3d4e5f6").server.missing is False
+
+
 def test_pull_keeps_previous_anchor_when_head_unavailable(pullable, glab):
     # head_sha 를 로컬에서 확보할 수 없으면 git show 가 모든 스레드에서
     # 실패해 anchor.extract 가 None 을 돌려준다. FIX 2 이전 코드는 그 None 을

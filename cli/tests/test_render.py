@@ -143,6 +143,26 @@ def test_header_line_general_still_warns_about_no_reply():
     assert header == "## [ ] (general) — @kim  `no-reply`"
 
 
+def test_header_shows_server_missing_badge():
+    review = _sample()
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.server.missing = True
+
+    assert "`server-missing`" in render.header_line(target)
+
+
+def test_general_header_also_shows_server_missing():
+    # 위치가 아니라 서버 속성을 보는 배지이므로 (general) 헤더에도 붙는다
+    # (review-md.md §3).
+    review = _sample()
+    target = next(t for t in review.threads if t.id == "7a0b1c2d3e4f")
+    target.server.missing = True
+    line = render.header_line(target)
+
+    assert "(general)" in line
+    assert "`server-missing`" in line
+
+
 def test_order_puts_general_first_then_path_line():
     threads = [
         thread(id="cccc3333", path="src/b.py", line=10),
