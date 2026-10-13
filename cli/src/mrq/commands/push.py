@@ -43,8 +43,15 @@ def run(args) -> int:
         for warning in outcome.warnings:
             print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
 
-        # 전체를 한 번만 조회한다(MUST). 스레드별 GET 은 N+1 이다.
-        snapshot = discussions.to_threads(discussions.fetch(iid), review.me.username)
+        # `--publish` 단독은 발행할 draft 가 이미 있고 대상 판정이 필요 없다
+        # (cli.md §9 `--draft`) — 전체를 한 번만 조회한다(MUST)는 그 판정이
+        # 실제로 필요할 때만 적용된다. 스레드별 GET 은 N+1 이다.
+        publish_only = args.publish and not args.draft
+        snapshot = (
+            None
+            if publish_only
+            else discussions.to_threads(discussions.fetch(iid), review.me.username)
+        )
         sheet = push.plan(review, snapshot=snapshot, resolve=args.resolve, force=args.force)
 
         if args.dry_run:
@@ -55,7 +62,15 @@ def run(args) -> int:
                 "`.mrq/current` 가 낡은 것을 가리키고 있다는 신호입니다.",
                 force=args.force,
             )
-        failures = _send(root, review, sheet)
+        if args.draft or args.publish:
+            if args.draft and not review.capabilities.draft_notes:
+                raise UsageError(
+                    "이 GitLab 은 draft_notes API 를 지원하지 않습니다 (--draft 를 쓸 수 "
+                    "없습니다). 일반 전송은 `mrq push` 입니다."
+                )
+            failures = _run_draft(root, review, sheet, args)
+        else:
+            failures = _send(root, review, sheet)
 
     _repull(iid, json_mode=args.json)
     return _report(sheet, failures, json_mode=args.json)
@@ -203,6 +218,99 @@ def _record_failure(thread: model.Thread, op: str, exc: GlabError) -> dict:
         "reason": exc.reason,
         "retryable": exc.retryable,
     }
+
+
+def _run_draft(root, review: model.Review, sheet: push.Plan, args) -> list[dict]:
+    """draft 생성과 발행. 결정 0012.
+
+    중복 방어는 `GET draft_notes` 한 번이 전부다(MUST) — `pushed_hash` 가 아직
+    없으므로 두 겹이 아니다. 조회가 실패하면 draft 를 만들지 않는다: 방어 없이
+    만들면 재실행이 draft 를 복제하고, 복제된 draft 는 mrq 가 지울 수 없다.
+    """
+    drafts = transport.list_drafts(review.iid)  # GlabError → exit 5
+    failures: list[dict] = []
+    if args.draft:
+        failures += _create_drafts(root, review, sheet, drafts)
+    if args.publish:
+        if args.draft:
+            # 방금 만든 draft 는 위 조회 결과에 없다 — 발행 뒤 pushed_hash
+            # 기록·reply 정리가 그 스레드만 건너뛰지 않도록 다시 조회한다.
+            drafts = transport.list_drafts(review.iid)
+        failures += _publish(root, review, drafts, force=args.force)
+    return failures
+
+
+def _create_drafts(root, review: model.Review, sheet: push.Plan, drafts: list[dict]) -> list[dict]:
+    """답글과 resolve 를 draft 하나로 묶는다. resolve 는 `resolve_discussion`
+    에 실어 보내고 별도 `PUT discussions` 는 보내지 않는다(MUST NOT).
+    """
+    existing = {(d.get("discussion_id"), (d.get("note") or "").strip()) for d in drafts}
+    by_id = {t.id: t for t in review.threads}
+    failures: list[dict] = []
+    for decision in sheet.targets():
+        if not decision.reply and not decision.resolve:
+            continue
+        thread = by_id[decision.thread]
+        body = decision.reply or thread.local.reply
+        if (thread.id, body.strip()) in existing:
+            # 1단계의 중복 방어. 이미 같은 쌍의 draft 가 있다 — 조용히 생략한다.
+            continue
+        try:
+            transport.create_draft(review.iid, thread.id, body, resolve=decision.resolve)
+        except GlabError as exc:
+            failures.append(_record_failure(thread, "draft", exc))
+        else:
+            # 성공해도 local.reply 와 pushed_hash 는 건드리지 않는다(MUST NOT,
+            # 결정 0012) — 발행 전까지는 사용자 글이 GitLab 의 내 draft 안에만
+            # 있으므로 로컬에서 지우면 잃는다. 과거 실패가 남아 있었다면
+            # 이번 성공으로 비운다(§9 가 모든 작업에 요구하는 일반 규칙).
+            thread.local.push_error = None
+            print(f"draft {thread.id[:8]}{' (+resolve)' if decision.resolve else ''}")
+        # 스레드 하나가 끝날 때마다 json 을 flush 한다(MUST, §9 4c 와 같다).
+        store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
+    return failures
+
+
+def _publish(root, review: model.Review, drafts: list[dict], *, force: bool) -> list[dict]:
+    """`bulk_publish` 는 내 pending draft **전부**를 발행한다 (선택적 발행이 없다)."""
+    bodies = {(t.id, t.local.reply.strip()): t for t in review.threads if t.local.reply.strip()}
+    mine = [d for d in drafts if (d.get("discussion_id"), (d.get("note") or "").strip()) in bodies]
+    foreign = [d for d in drafts if d not in mine]
+    if foreign:
+        prompt.confirm(
+            f"mrq 가 만들지 않은 draft 가 {len(foreign)}건 있습니다. "
+            "bulk_publish 는 내 draft 전부를 발행하므로 그것들도 함께 공개됩니다.",
+            force=force,
+        )
+    if not drafts:
+        print("발행할 draft 가 없습니다.")
+        return []
+
+    try:
+        transport.bulk_publish(review.iid)
+    except GlabError as exc:
+        thread = review.threads[0]
+        failure = _record_failure(thread, "publish", exc)
+        store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
+        return [failure]
+
+    # 발행된 본문의 해시를 기록하고, **현재 값이 그 본문과 같을 때만** 비운다
+    # (결정 0012) — draft 를 만든 뒤 md 에서 고친 답글을 지우면 그 수정이
+    # 사라진다.
+    for draft in drafts:
+        thread = next((t for t in review.threads if t.id == draft.get("discussion_id")), None)
+        if thread is None:
+            continue
+        note = draft.get("note") or ""
+        thread.local.pushed_hash = push.body_hash(note)
+        if thread.local.reply.strip() == note.strip():
+            thread.local.reply = ""
+        thread.local.push_error = None
+        thread.local.touched_by = "push"
+        thread.local.touched_at = surface.now()
+    store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
+    print(f"published: draft {len(drafts)}건")
+    return []
 
 
 def _repull(iid: int, *, json_mode: bool) -> None:
