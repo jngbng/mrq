@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from mrq import model, report, store, surface
+from mrq import model, push, report, store, surface
 from mrq.__main__ import main
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
@@ -10,6 +10,20 @@ SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.j
 
 def _review() -> model.Review:
     return model.loads(SAMPLE.read_text(encoding="utf-8"))
+
+
+def _blank(review: model.Review) -> model.Review:
+    """샘플에 섞여 있는 미전송 답글/상태를 비운다 (`test_push.py` 와 같은 이유).
+
+    절대 수를 단언하는 테스트에서만 쓴다 — 다른 테스트는 표본 그대로를 보고
+    `>=`/`in` 으로 확인한다.
+    """
+    for thread in review.threads:
+        thread.local.state = "todo"
+        thread.local.reply = ""
+        thread.local.pushed_hash = None
+        thread.local.push_error = None
+    return review
 
 
 @pytest.fixture
@@ -213,3 +227,37 @@ def test_status_does_not_warn_in_detached_head_as_if_the_branch_moved(ready, cap
     err = capsys.readouterr().err
     assert "detached HEAD" in err
     assert "mrq pull" not in err
+
+
+def test_status_push_block_matches_plan_without_snapshot():
+    review = _review()
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.state = "done"
+    target.local.reply = "보낼 답글"
+
+    payload = report.status_payload(review)
+    sheet = push.plan(review)
+
+    assert payload["push"] == {
+        "replies": sheet.replies,
+        "resolves": sheet.resolves,
+        "skip": sheet.skip,
+    }
+    assert payload["warnings"] == sheet.warnings
+
+
+def test_status_warns_about_missing_thread_and_recorded_failure():
+    # 표본의 다른 두 스레드(c3d4e5f6a1b2, d4e5f6a1b2c3)에도 미전송 답글이
+    # 있으므로, 절대 수(`replies == 0`)를 보려면 비워야 한다 — 그 두 스레드는
+    # 이 테스트와 무관하다.
+    review = _blank(_review())
+    missing = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    missing.local.state = "done"
+    missing.local.reply = "보낼 답글"
+    missing.server.missing = True
+
+    payload = report.status_payload(review)
+
+    assert {"thread": "a1b2c3d4e5f6", "reason": "server-missing"} in payload["warnings"]
+    assert payload["push"]["replies"] == 0
+    assert payload["push"]["skip"] == 1

@@ -12,6 +12,9 @@ from mrq import model, render, report, store
 _REASON_TEXT = {
     "no-reply": "개별 노트라 답글 전송 불가",
     "not-resolvable": "resolve 할 수 없는 스레드",
+    "server-missing": "서버 응답에서 사라짐 — 전송하지 않습니다",
+    "todo-with-reply": "답글이 있는데 상태가 [ ] — 전송되지 않습니다",
+    "push-failed": "지난 전송이 실패했습니다 (review.json 의 push_error)",
 }
 
 
