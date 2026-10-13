@@ -93,6 +93,11 @@ def _message(body: str, status: int) -> str:
 def main() -> int:
     argv = sys.argv[1:]
 
+    if argv[:1] == ["--version"]:
+        # 진짜 glab 1.114 의 첫 줄 모양이다.
+        print("glab version 1.114.0 (2026-01-01)")
+        return 0
+
     # `-F key=@-` 가 있을 때만 stdin 을 읽는다. 무조건 읽으면 상속된 stdin 에서 막힌다.
     stdin = sys.stdin.read() if any(arg.endswith("=@-") for arg in argv) else ""
 

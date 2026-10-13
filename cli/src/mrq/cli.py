@@ -70,6 +70,8 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("--publish", action="store_true", help="draft 를 일괄 발행한다")
     push.add_argument("--resolve", choices=["auto", "skip", "require"], default="auto")
 
+    sub.add_parser("doctor", help="환경을 진단한다")
+
     return parser
 
 
@@ -78,6 +80,7 @@ def dispatch(argv: list[str]) -> int:
     if args.command is None:
         raise UsageError("명령을 지정하세요. `mrq --help` 를 보세요.")
 
+    from mrq.commands import doctor as doctor_command
     from mrq.commands import listing as listing_command
     from mrq.commands import pull as pull_command
     from mrq.commands import push as push_command
@@ -96,5 +99,6 @@ def dispatch(argv: list[str]) -> int:
         "reply": reply_command.run,
         "state": state_command.run,
         "push": push_command.run,
+        "doctor": doctor_command.run,
     }
     return handlers[args.command](args)
