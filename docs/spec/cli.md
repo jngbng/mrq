@@ -748,15 +748,23 @@ GitLab UI에서 확인해야 하는 경우(이미지 코멘트, 개별 노트, �
 ```
 $ mrq doctor
 glab          ✓ v1.58.0
-glab auth     ✓ gitlab.example.com (bongya)
+glab auth     ✓ bongya (id 1984979)
 remote        ✓ origin → group/sub/project
 MR            ✓ !1234 (source_branch feat/retry)
 head_sha      ✓ abc1234 (로컬에 있음)
+discussions   ✓ --paginate --output ndjson 동작
+stdin         ✓ -F text=@- 동작
 draft_notes   ✓ 사용 가능
-resolve 권한  ✓ access_level 40
+resolve 권한  ✓ Developer 이상
 storage       ✓ /home/bongya/w/proj/.mrq
-git ignore    ✓ .mrq/.gitignore
 ```
+
+`discussions`는 `pull`이 의존하는 `--paginate --output ndjson` 경로를 실제로 한 번
+태워 확인하고, `stdin`은 `reply`/`push`가 답글 본문을 보내는 `-F field=@-` 경로를
+부작용 없는 호출(`POST /markdown`)로 확인한다. 이 인스턴스가 그 엔드포인트를
+지원하지 않거나 권한이 없으면(403/404) `stdin`은 거짓 `✗` 대신 "확인 불가"를
+보고한다. `.mrq/.gitignore` 확인은 별도 행이 아니라 `storage`에 합쳐져 있다 — 없으면
+`storage`가 `✗`와 함께 그것을 알린다.
 
 `doctor`는 `.mrq/`를 **만들지 않는다**(MUST NOT) — `.mrq/.gitignore` 보장은 다른
 모든 명령의 시작 규칙이지만(`data-model.md` §1), 진단이 상태를 만들면 "없음"을
