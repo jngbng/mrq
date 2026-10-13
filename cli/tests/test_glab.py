@@ -1,7 +1,7 @@
 import pytest
 
 from mrq import glab as glab_mod
-from mrq.errors import NetworkError
+from mrq.errors import GlabError, NetworkError
 
 LONG_REPLY = """확인했습니다. `timeout=10` 을 추가했습니다.
 
@@ -23,7 +23,7 @@ def test_get_parses_json(glab):
 def test_get_builds_expected_argv(glab):
     glab.route("GET user", {"id": 7})
     glab_mod.api("user")
-    assert glab.calls()[0]["argv"] == ["api", "user", "--method", "GET"]
+    assert glab.calls()[0]["argv"] == ["api", "user", "--method", "GET", "-i"]
 
 
 def test_post_sends_body_through_stdin(glab):
@@ -56,10 +56,6 @@ def test_unregistered_route_raises_network_error(glab):
     with pytest.raises(NetworkError) as excinfo:
         glab_mod.api("user")
     assert excinfo.value.exit_code == 5
-
-
-def test_check_false_returns_none(glab):
-    assert glab_mod.api("user", check=False) is None
 
 
 def test_fail_at_simulates_crash(glab):
@@ -99,3 +95,73 @@ def test_route_seq_counts_calls_per_route_not_globally(glab):
     assert glab_mod.api("user") == {"id": 1}
     glab_mod.api("other")
     assert glab_mod.api("user") == {"id": 2}
+
+
+def test_include_flag_is_added_when_not_paginating(glab):
+    glab.route("GET user", {"id": 7})
+    glab_mod.api("user")
+    assert "-i" in glab.calls()[0]["argv"]
+
+
+def test_include_flag_is_not_added_when_paginating(glab):
+    # -i 와 --paginate 를 같이 쓰면 glab 이 페이지마다 헤더 블록을 내 ndjson
+    # 파싱이 깨진다 (1.114 실측). 그 경로는 상태 코드를 쓰지 않는다.
+    glab.route("GET discussions", raw='{"id": "a"}\n')
+    glab_mod.api("discussions", paginate=True)
+    assert "-i" not in glab.calls()[0]["argv"]
+
+
+def test_success_strips_headers_and_parses_body(glab):
+    glab.route("GET user", {"id": 7, "username": "bongya"})
+    assert glab_mod.api("user") == {"id": 7, "username": "bongya"}
+
+
+def test_body_containing_a_blank_crlf_line_is_not_truncated(glab):
+    # 본문 안에 CRLFCRLF 가 들어 있어도 헤더/본문 구분은 **첫** 구분자에서만
+    # 일어나야 한다. raw 로 넣는다 — json.dumps 는 CR 을 이스케이프해서
+    # 실제 바이트가 들어가지 않는다.
+    glab.route("GET note", raw='{\r\n\r\n  "ok": true\r\n}')
+    assert glab_mod.api("note") == {"ok": True}
+
+
+def test_status_204_with_no_body_is_none(glab):
+    glab.route("PUT d/1", raw="", status=204)
+    assert glab_mod.api("d/1", method="PUT") is None
+
+
+@pytest.mark.parametrize(
+    "status,reason,retryable",
+    [
+        (403, "forbidden", False),
+        (404, "not-found", False),
+        (409, "conflict", False),
+        (500, "unknown", True),
+        (503, "unknown", True),
+        (418, "unknown", False),
+    ],
+)
+def test_http_error_carries_status_reason_and_retryable(glab, status, reason, retryable):
+    glab.route("GET user", {"message": f"{status} nope"}, status=status)
+    with pytest.raises(GlabError) as excinfo:
+        glab_mod.api("user")
+    assert excinfo.value.status == status
+    assert excinfo.value.reason == reason
+    assert excinfo.value.retryable is retryable
+    assert excinfo.value.exit_code == 5
+
+
+def test_error_without_a_parseable_status_is_network(glab):
+    # 등록되지 않은 경로는 HTTP 실패가 아니라 프로세스 실패다. 상태를 모른다.
+    with pytest.raises(GlabError) as excinfo:
+        glab_mod.api("user")
+    assert excinfo.value.status is None
+    assert excinfo.value.reason == "network"
+    assert excinfo.value.retryable is True
+
+
+def test_non_json_error_body_does_not_crash(glab):
+    # 리버스 프록시가 HTML 에러 페이지를 돌려줄 수 있다.
+    glab.route("GET user", raw="<html>502 Bad Gateway</html>", status=502)
+    with pytest.raises(GlabError) as excinfo:
+        glab_mod.api("user")
+    assert excinfo.value.status == 502

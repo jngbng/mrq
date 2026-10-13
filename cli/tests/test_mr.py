@@ -117,3 +117,22 @@ def test_draft_notes_unavailable_is_false(glab):
 def test_draft_notes_available_is_true(glab):
     glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
     assert mr.draft_notes_available(1234) is True
+
+
+def test_draft_notes_unavailable_on_404(glab):
+    # 이 GitLab 이 draft notes 를 지원하지 않는 경우.
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/draft_notes",
+        {"message": "404 Not found"},
+        status=404,
+    )
+    assert mr.draft_notes_available(1234) is False
+
+
+def test_draft_notes_unavailable_on_server_error(glab):
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/draft_notes",
+        {"message": "502 Bad Gateway"},
+        status=502,
+    )
+    assert mr.draft_notes_available(1234) is False
