@@ -57,7 +57,7 @@ def run(args) -> int:
                 return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
             review = outcome.review
             for warning in outcome.warnings:
-                print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
+                print(mdsync.format_warning(warning), file=sys.stderr)
 
             # 전체를 한 번만 조회한다(MUST). 스레드별 GET 은 N+1 이다.
             snapshot = discussions.to_threads(discussions.fetch(iid), review.me.username)

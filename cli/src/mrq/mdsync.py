@@ -132,6 +132,18 @@ def _swallowed_anchor_errors(review, parsed: mdparse.Parsed) -> list[mdparse.Mes
     return out
 
 
+def format_warning(warning: mdparse.Message) -> str:
+    """`review.md:<line>: <message>` — `line` 이 `None` 이면 접두사를 뺀다
+    (Minor 8). `conflict._todo_with_reply_warnings` 처럼 해당 스레드의
+    블록이 현재 md 에 없는 경고가 `None` 을 쓴다 — 가짜 위치(`review.md:0:`)
+    보다 위치 없음이 사실에 가깝다. `sync`/`push` 가 경고를 찍는 자리가
+    둘이라 한 곳에 모아 둔다.
+    """
+    if warning.line is None:
+        return warning.message
+    return f"review.md:{warning.line}: {warning.message}"
+
+
 def report_errors(errors: list[mdparse.Message], *, json_mode: bool) -> int:
     """exit 2 — 아무것도 쓰지 않았다. 줄 번호와 함께 보고한다(MUST).
 
@@ -140,7 +152,7 @@ def report_errors(errors: list[mdparse.Message], *, json_mode: bool) -> int:
     (`cli.md` §2 는 stdout 이 순수 JSON 이기만 요구한다).
     """
     for error in errors:
-        print(f"review.md:{error.line}: {error.message}", file=sys.stderr)
+        print(format_warning(error), file=sys.stderr)
     print("파싱 에러가 있어 아무것도 쓰지 않았습니다.", file=sys.stderr)
     if json_mode:
         json.dump(

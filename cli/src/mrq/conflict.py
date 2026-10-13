@@ -141,7 +141,13 @@ def _todo_with_reply_warnings(
         if state == "todo" and reply.strip():
             out.append(
                 mdparse.Message(
-                    lines.get(thread.id, 0),
+                    # 이 스레드의 블록이 현재 md 에 없을 수 있다(예: 서버에서
+                    # resolve 돼 기본 렌더가 생략한 경우, Minor 8) — `lines`
+                    # 에서 못 찾으면 `0`이 아니라 `None`을 쓴다. 가짜 위치
+                    # `review.md:0:`은 `stale`을 파일 1 행에 붙이면 안 되는
+                    # 것과 같은 이유로 위치 신뢰를 잃는다(data-model.md §4.9).
+                    # 메시지 자체에 이미 스레드 id 가 있어 식별은 그대로 된다.
+                    lines.get(thread.id),
                     f"{thread.id[:8]}: 답글이 있는데 상태가 `[ ]` 입니다 — "
                     "전송되지 않습니다. 보내려면 `[x]` 또는 `[~]` 로 바꾸세요",
                 )

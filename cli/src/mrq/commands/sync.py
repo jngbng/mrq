@@ -29,7 +29,7 @@ def run(args) -> int:
     # stdout 은 순수 JSON 이어야 하므로 --json 일 때도 페이로드에만 담으면
     # 사람이 터미널에서 그냥 보는 경로가 없어진다.
     for warning in outcome.warnings:
-        print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
+        print(mdsync.format_warning(warning), file=sys.stderr)
 
     if args.json:
         json.dump(

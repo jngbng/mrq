@@ -117,6 +117,25 @@ def test_identical_values_without_a_v_token_are_not_a_conflict():
     assert conflict.classify(t, md) == "keep-json"
 
 
+def test_todo_with_reply_warning_has_no_fake_line_when_thread_has_no_block():
+    # Minor 8 — `todo` + 답글이 있는 스레드가 현재 md 에 블록이 전혀 없으면
+    # (예: 서버에서 resolve 돼 기본 렌더가 생략한 경우) `lines.get(id, 0)`
+    # 이 가짜 위치 0 을 만들어 `review.md:0: ...` 처럼 찍혔다 — 존재하지
+    # 않는 위치를 가리키는 진단은 `stale` 배지와 같은 이유로 위치 신뢰를
+    # 잃는다(data-model.md §4.9). 블록이 없으면 위치를 `None` 으로 둔다.
+    t = thread(id="a1b2c3d4e5f6", state="todo", reply="아직 체크박스를 안 바꿨다")
+
+    class _R:
+        threads = [t]
+
+    parsed = mdparse.Parsed(blocks=[])  # 이 스레드의 블록이 현재 md 에 없다
+
+    _, _, warnings = conflict.plan_sync(_R(), parsed)
+
+    assert len(warnings) == 1
+    assert warnings[0].line is None
+
+
 def test_a_single_character_difference_is_still_a_conflict():
     # 값 동일 단축이 판정 표 4행을 삼키지 않는지 고정한다 (§5.2 재검토).
     t = thread(state="done", reply="같은 결론")

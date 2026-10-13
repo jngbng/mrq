@@ -52,7 +52,11 @@ class Block:
 
 @dataclass
 class Message:
-    line: int
+    # `None`은 "위치가 없다" — 파싱 경고·에러는 항상 실제 줄에서 나오므로
+    # 실제 정수다. `conflict._todo_with_reply_warnings`처럼 블록이 현재
+    # md 에 없을 수 있는 경고만 `None`을 쓴다(Minor 8) — 가짜 위치(0)보다
+    # 위치 없음이 사실에 가깝다.
+    line: int | None
     message: str
 
 
