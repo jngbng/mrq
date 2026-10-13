@@ -16,6 +16,11 @@ from mrq.errors import UsageError
 
 def run(args) -> int:
     root = store.repo_root()
+    # `.mrq/.gitignore` 보장은 `doctor` 를 제외한 모든 명령의 시작 규칙이다
+    # (data-model.md §1 MUST). `--mr` 분기는 `store.open_review` 를 타지 않으므로
+    # 여기서 직접 보장한다 — 안 그러면 `--mr` 로 연 적밖에 없는 저장소의
+    # `.mrq/` 가 git 에 그대로 잡힌다.
+    store.ensure_mrq_gitignore(root)
     if args.mr is not None:
         path = store.review_json_path(root, args.mr)
         if not path.is_file():

@@ -5,6 +5,8 @@
   MRQ_GLAB_FIXTURES  routes.json 과 응답 파일이 있는 디렉터리
   MRQ_GLAB_LOG       호출 기록 (JSON Lines: {"argv": [...], "stdin": "..."})
   MRQ_GLAB_FAIL_AT   N 번째 호출에서 exit 1 (1-indexed, 콤마 구분)
+  MRQ_GLAB_VERSION_STATUS  `--version` 의 exit 코드 (기본 0). doctor 의
+                     "바이너리는 있지만 실패" 분기 전용. 실물에는 없는 스위치다
 
 `routes.json` 은 `"<METHOD> <path>"` 마다 **응답 목록** 을 담는다. 그 키로 들어온
 호출의 순서대로 소비하고, 목록이 소진되면 마지막 것이 반복된다. 응답 하나는
@@ -94,8 +96,15 @@ def main() -> int:
     argv = sys.argv[1:]
 
     if argv[:1] == ["--version"]:
-        # 진짜 glab 1.114 의 첫 줄 모양이다.
-        print("glab version 1.114.0 (2026-01-01)")
+        version_status = int(os.environ.get("MRQ_GLAB_VERSION_STATUS", "0"))
+        if version_status != 0:
+            # doctor 의 "glab 바이너리는 있지만 --version 이 실패한다" 분기를
+            # 테스트하기 위한 전용 스위치다. 실물에 이런 모드는 없다.
+            print("glab: 버전 확인 실패 (테스트 전용)", file=sys.stderr)
+            return version_status
+        # 실측(glab 1.114.0, --version 출력 그대로): "version" 이라는 단어도
+        # 날짜도 없고, 괄호는 빈 채로 남는다.
+        print("glab 1.114.0 ()")
         return 0
 
     # `-F key=@-` 가 있을 때만 stdin 을 읽는다. 무조건 읽으면 상속된 stdin 에서 막힌다.

@@ -15,7 +15,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from mrq import gitcmd, glab, mr, store
-from mrq.errors import MrqError
+from mrq.errors import GlabError, MrqError
 
 _VERSION = re.compile(r"\d+\.\d+\.\d+")
 
@@ -74,15 +74,18 @@ def _checks():
     try:
         refs = mr.diff_refs(info.iid)
     except MrqError as exc:
-        yield Check("head_sha", False, str(exc))
-    else:
-        present = gitcmd.run(
-            ["cat-file", "-e", f"{refs.head_sha}^{{commit}}"], cwd=root, check=False
-        )
         yield Check(
             "head_sha",
-            present is not None,
-            f"{refs.head_sha[:7]} ({'로컬에 있음' if present is not None else '로컬에 없음'})",
+            False,
+            str(exc),
+            "네트워크 연결과 `glab auth status` 를 확인한 뒤 다시 시도하세요",
+        )
+    else:
+        present = gitcmd.have_commit(root, refs.head_sha)
+        yield Check(
+            "head_sha",
+            present,
+            f"{refs.head_sha[:7]} ({'로컬에 있음' if present else '로컬에 없음'})",
             "`mrq pull` 이 자동으로 fetch 합니다",
         )
 
@@ -94,6 +97,8 @@ def _checks():
         yield Check("discussions", False, str(exc), "glab 의 --paginate 지원을 확인하세요")
     else:
         yield Check("discussions", True, "--paginate --output ndjson 동작")
+
+    yield _stdin_field()
 
     drafts_ok = mr.draft_notes_available(info.iid)
     yield Check(
@@ -118,9 +123,37 @@ def _glab_version() -> Check:
         )
     except FileNotFoundError:
         return Check("glab", False, "설치되어 있지 않습니다", "https://gitlab.com/gitlab-org/cli")
+    if proc.returncode != 0:
+        return Check(
+            "glab",
+            False,
+            f"버전 확인 실패 (exit {proc.returncode})",
+            "`glab --version` 을 직접 실행해 설치를 확인하세요",
+        )
     found = _VERSION.search(proc.stdout or "")
     # 버전 번호로 기능을 분기하지 않는다(MUST NOT). 표시용이다.
-    return Check("glab", proc.returncode == 0, f"v{found[0]}" if found else "버전 확인 불가")
+    return Check("glab", True, f"v{found[0]}" if found else "버전 확인 불가")
+
+
+def _stdin_field() -> Check:
+    """`-F <필드>=@-` 로 본문을 stdin 으로 보내는 경로를 확인한다 (cli.md §3) —
+    `reply`/`push` 가 답글 본문을 보내는 바로 그 경로다. `glab` 이 이 처리 방식을
+    바꾸면 답글이 조용히 깨지므로, doctor 가 실제로 한 번 태워 확인해야 한다.
+
+    GitLab 의 markdown 렌더 엔드포인트(`POST /markdown`)를 쓴다 — 아무것도 만들지
+    않는, 부작용 없는 호출이다. 이 인스턴스가 지원하지 않거나(404) 권한이
+    없으면(403) 거짓 ✗ 대신 "확인 불가"로 보고한다 — 가짜 실패가 진단의 신뢰를
+    잃는 가장 빠른 길이다.
+    """
+    try:
+        glab.api("markdown", method="POST", body=("text", "mrq doctor"))
+    except GlabError as exc:
+        if exc.status in (403, 404):
+            return Check("stdin", True, "확인 불가 (markdown API 없음/권한 없음)")
+        return Check("stdin", False, str(exc), "glab 의 `-F field=@-` 전송을 확인하세요")
+    except MrqError as exc:
+        return Check("stdin", False, str(exc), "glab 의 `-F field=@-` 전송을 확인하세요")
+    return Check("stdin", True, "-F text=@- 동작")
 
 
 def _storage(root: Path) -> Check:
