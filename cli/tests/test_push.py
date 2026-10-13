@@ -323,6 +323,63 @@ def test_plan_decision_skip_is_per_action_not_per_thread():
     assert decision.resolve is True
 
 
+def test_plan_keeps_both_reasons_when_reply_and_resolve_are_blocked_differently():
+    # 라운드 2 Important — no-reply 로 reply 가 막히면서 resolve 가 독립적으로
+    # 권한 부족으로 막히면 두 이유가 모두 살아 있어야 한다. 단일 슬롯이었을
+    # 때는 먼저 걸린 no-reply 가 `or` 로 권한 이유를 지워 pending_resolves 와
+    # 경고가 조용히 0 이 됐다.
+    review = _blank(_review())
+    review.me.can_resolve = False
+    thread = _ready(review, "a1b2c3d4e5f6", state="done", reply="못 보내는 답글")
+    thread.server.repliable = False
+
+    sheet = push.plan(review)
+
+    decision = next(d for d in sheet.decisions if d.thread == "a1b2c3d4e5f6")
+    assert set(decision.skips) == {"no-reply", "no-resolve-permission"}
+    assert decision.reply == ""
+    assert decision.resolve is False
+    assert sheet.pending_resolves == 1
+    assert {"thread": "a1b2c3d4e5f6", "reason": "no-reply"} in sheet.warnings
+    assert {"thread": None, "reason": "no-resolve-permission"} in sheet.warnings
+    # no-reply 가 세 가지 집계 이유(cli.md §8) 중 하나이므로 스레드 하나로
+    # 한 번만 센다 — no-resolve-permission 과 동시에 걸려도 두 번이 아니다.
+    assert sheet.skip == 1
+
+
+def test_plan_retracts_superseded_warning_when_server_changed_overrides_no_reply():
+    # 라운드 2 Minor — server-changed 도 server-missing 과 똑같이 앞서 쌓인
+    # no-reply/not-resolvable 경고를 철회해야 한다. 새 구조에서는 "스레드
+    # 단위 이유는 skips 를 통째로 교체한다" 는 한 규칙이 server-missing 과
+    # server-changed 둘 다 해결한다 — 두 번째 특별 케이스가 아니다.
+    review = _review()
+    _ready(review, "7a0b1c2d3e4f", state="replied", reply="보낼 수 없는 답글")
+    snapshot = _review().threads
+    next(t for t in snapshot if t.id == "7a0b1c2d3e4f").server.note_count = 99
+
+    sheet = push.plan(review, snapshot=snapshot)
+
+    decision = next(d for d in sheet.decisions if d.thread == "7a0b1c2d3e4f")
+    assert decision.skips == ("server-changed",)
+    assert {"thread": "7a0b1c2d3e4f", "reason": "no-reply"} not in sheet.warnings
+
+
+def test_decision_skip_display_precedence_is_pinned():
+    # not-resolvable + 권한 부족은 plan() 으로는 만들 수 없다(둘 다 resolve
+    # 액션의 이유라 같은 if/else 에서 배타적이다) — 표시 우선순위 자체를
+    # 주석이 아니라 테스트로 고정한다.
+    assert push.Decision(thread="x", skips=("not-resolvable", "no-resolve-permission")).skip == (
+        "not-resolvable"
+    )
+    assert push.Decision(thread="x", skips=("no-resolve-permission", "no-reply")).skip == "no-reply"
+    assert push.Decision(thread="x", skips=("server-changed", "no-reply")).skip == "server-changed"
+    assert (
+        push.Decision(thread="x", skips=("server-missing", "server-changed")).skip
+        == "server-missing"
+    )
+    assert push.Decision(thread="x").skip is None
+
+
 def test_plan_warns_about_recorded_push_error_and_todo_reply():
     review = _review()
     stale = next(t for t in review.threads if t.id == "b2c3d4e5f6a1")

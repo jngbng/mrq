@@ -28,10 +28,23 @@ SKIP_REASONS = (
 # `Plan.skip` 이 세는 세 가지 (cli.md §8): "로컬에서 이미 보낼 수 없다고 아는"
 # 스레드의 수다. `server-changed` 는 재조회가 있어야만 나오는 판정이라 여기
 # 없고(§9), `no-resolve-permission` 은 reply 는 보내지면서 resolve 액션만
-# 막는 경우가 있어(`Decision.skip` 은 액션 단위) 넣지 않는다 — 두 이유 모두
+# 막는 경우가 있어(`Decision.skips` 참조) 넣지 않는다 — 두 이유 모두
 # `decisions`/`targets()` 에는 그대로 남는다. 이 목록과 `SKIP_REASONS` 가
 # 다른 것은 버그가 아니라 의도다.
 _COUNTED_SKIP_REASONS = ("no-reply", "not-resolvable", "server-missing")
+
+# `Decision.skip`(표시용 단일 값)이 `skips` 에서 하나를 고르는 순서. 스레드
+# 전체를 무효화하는 이유(`server-missing`/`server-changed`)가 액션별 이유보다
+# 우선한다. 실제로는 이 둘이 다른 이유와 같은 `skips` 에 공존하지 않는다 —
+# `plan()` 이 스레드 단위 이유를 만나면 `skips` 를 통째로 교체한다 — 그래도
+# 순서를 명시해 두면 그 전제가 나중에 바뀌어도 동작이 뚜렷하다.
+_SKIP_PRECEDENCE = (
+    "server-missing",
+    "server-changed",
+    "no-reply",
+    "not-resolvable",
+    "no-resolve-permission",
+)
 
 
 def body_hash(reply: str) -> str:
@@ -47,19 +60,47 @@ def body_hash(reply: str) -> str:
 class Decision:
     """스레드 하나에 대해 이번 `push` 가 할 일.
 
-    `skip` 은 **액션 단위**다 — 스레드 전체가 막혔다는 뜻이 아니다. 예:
-    `repliable=False` + `resolvable=True` 인 `done` 스레드는 `skip="no-reply"`
-    이면서 동시에 `resolve=True` 를 가질 수 있다 (reply 만 막혔다). 나중에
-    실행기를 `for d in targets(): if d.skip: continue` 식으로 쓰면 그
-    resolve 를 조용히 잃는다 — `reply`/`resolve`/`record_hash` 를 각각 봐야
-    한다.
+    `skips` 는 **액션 단위** 이유의 묶음이다 — 스레드 전체가 막혔다는 뜻이
+    아니다. `repliable=False` + `resolvable=True` 인 `done` 스레드는 reply 가
+    `no-reply` 로 막히면서 resolve 는 그대로 진행될 수 있다(`resolve=True`,
+    `skips=("no-reply",)`). reply 와 resolve 가 **서로 다른 이유로 동시에**
+    막히는 경우(예: `no-reply` + 권한 부족)도 있다 — 그때는 `skips` 에 둘 다
+    담긴다. 단일 문자열 슬롯(`skip`)에 그 둘을 `or` 로 합치던 이전 설계는
+    번번이 한쪽을 조용히 잃었다: 한 라운드에서는 권한만으로 막힌 resolve 가
+    `decisions` 에서 통째로 사라졌고, 다음 라운드에서는 먼저 걸린 `no-reply`
+    가 독립적으로 막힌 권한 부족을 덮어 `pending_resolves`/경고가 0 이 됐다.
+    카운트와 경고는 모두 `skips` 에서 파생시켜야 한다 — 절대 아래 `skip`
+    표시용 프로퍼티에서 파생시키지 않는다.
+
+    `server-missing`/`server-changed` 는 예외다 — 스레드 전체를 무효화하므로
+    `plan()` 은 그 두 값을 만나면 `skips` 를 다른 이유와 **공존시키지 않고
+    통째로 교체한다**. 이것이 "경고가 철회되지 않는다" 류의 버그를 구조적으로
+    막는다 — server-missing/server-changed 가 될 때마다 따로 챙겨야 하는
+    특별 케이스가 아니라, skips 교체 자체가 철회다.
     """
 
     thread: str
     reply: str = ""  # 보낼 본문. "" 면 답글 전송 없음
     resolve: bool = False
-    skip: str | None = None  # SKIP_REASONS 중 하나
+    # 이 스레드에 적용된 모든 스킵 이유. SKIP_REASONS 의 부분집합이며 보통
+    # 0~2 개다(reply 쪽 이유 + resolve 쪽 이유). 순서는 발견된 순서이고
+    # 의미를 갖지 않는다 — 표시 순서는 `skip` 프로퍼티가 정한다.
+    skips: tuple[str, ...] = ()
     record_hash: str | None = None  # 전송 없이 기록할 pushed_hash (2차 방어)
+
+    @property
+    def skip(self) -> str | None:
+        """`--dry-run`/사람이 읽는 화면이 찍는 단일 표시용 이유.
+
+        저장하지 않고 `skips` 에서 `_SKIP_PRECEDENCE` 순서로 매번 파생시킨다.
+        `targets()` 를 순회하는 쪽이 `for d in targets(): if d.skip: continue`
+        식으로 쓰면, 이 한 줄에 가려진 다른 액션(위 docstring 예의 resolve)을
+        조용히 잃는다 — `reply`/`resolve`/`record_hash` 를 각각 봐야 한다.
+        """
+        for reason in _SKIP_PRECEDENCE:
+            if reason in self.skips:
+                return reason
+        return None
 
 
 @dataclass
@@ -77,7 +118,11 @@ class Plan:
 
     @property
     def skip(self) -> int:
-        return sum(1 for d in self.decisions if d.skip in _COUNTED_SKIP_REASONS)
+        # 표시용 `d.skip` 이 아니라 `d.skips` 에서 직접 센다 — 한 스레드가
+        # `no-reply` 와 `no-resolve-permission` 을 동시에 가지면 표시용은
+        # 하나만 보여주지만, 집계는 "로컬에서 이미 보낼 수 없다고 아는"
+        # 세 이유(cli.md §8) 중 하나라도 있으면 그 스레드를 한 번 센다.
+        return sum(1 for d in self.decisions if any(r in d.skips for r in _COUNTED_SKIP_REASONS))
 
     @property
     def pending_resolves(self) -> int:
@@ -87,9 +132,10 @@ class Plan:
         에서 이미 빠지거나(`server-missing`) 바뀐(`server-changed`) 스레드,
         이미 resolve 된 스레드는 셈에 넣지 않는다. 직접 재계산하면(과거
         `commands/status.py` 가 그랬다) `resolvable`·`--resolve` 모드를
-        놓치고 이 함수의 판정과 어긋난다.
+        놓치고 이 함수의 판정과 어긋난다. `d.skips` 에서 직접 세므로
+        `no-reply` 와 동시에 걸려도(round 2 결함) 빠지지 않는다.
         """
-        return sum(1 for d in self.decisions if d.skip == "no-resolve-permission")
+        return sum(1 for d in self.decisions if "no-resolve-permission" in d.skips)
 
     def targets(self) -> list[Decision]:
         """실제로 쓰기 작업이 있는 결정만."""
@@ -120,14 +166,15 @@ def plan(
             continue
 
         decision = Decision(thread=thread.id)
-        # 이 스레드에 대해 이번 루프에서 내는 경고. `server-missing` 이 뒤에서
-        # 덮으면 통째로 버린다 — 한 스레드에 서로 다른 이유 두 개가 동시에
-        # 찍히면 `skip` 수(하나)와 맞지 않아 보인다.
+        skips: list[str] = []
+        # 이 스레드에 대해 이번 루프에서 내는 경고. 스레드 단위 이유가 뒤에서
+        # `skips` 를 교체하면 이것도 통째로 교체된다 — 한 스레드에 서로 다른
+        # 이유가 동시에 찍히는 것을 막는다.
         thread_warnings: list[dict] = []
 
         if has_reply:
             if not thread.server.repliable:
-                decision.skip = "no-reply"
+                skips.append("no-reply")
                 thread_warnings.append({"thread": thread.id, "reason": "no-reply"})
             elif local.pushed_hash == body_hash(local.reply):
                 # 1차 방어. 이미 보낸 본문이다 — 조용히 생략한다.
@@ -137,11 +184,11 @@ def plan(
 
         # 권한 부족으로만 막히는지 추적한다 — 서버에서 이미 빠지거나 바뀌거나
         # 이미 resolve 된 경우는 권한과 무관하게 시도되지 않으므로 아래에서
-        # `False` 로 꺾인다(Minor 3).
+        # `False` 로 꺾인다.
         resolve_eligible = False
         if wants_resolve:
             if not thread.server.resolvable:
-                decision.skip = decision.skip or "not-resolvable"
+                skips.append("not-resolvable")
                 thread_warnings.append({"thread": thread.id, "reason": "not-resolvable"})
             else:
                 resolve_eligible = True
@@ -150,24 +197,37 @@ def plan(
         # 로컬에서 이미 아는 제약이 먼저다. 그 판정은 스냅샷 없이 부르는
         # `status` 와 결과가 같아야 한다.
         if thread.server.missing:
-            decision.skip = "server-missing"
             decision.reply, decision.resolve, decision.record_hash = "", False, None
             resolve_eligible = False
+            skips = ["server-missing"]
             thread_warnings = [{"thread": thread.id, "reason": "server-missing"}]
         elif fresh is not None:
-            _judge_against_server(decision, thread, fresh.get(thread.id), force=force)
-            if decision.skip == "server-missing":
-                thread_warnings = [{"thread": thread.id, "reason": "server-missing"}]
+            thread_level = _judge_against_server(
+                decision, thread, fresh.get(thread.id), force=force
+            )
+            if thread_level is not None:
+                # 스레드 전체를 무효화한다 — 그 전까지 쌓인 액션별 이유/경고를
+                # 통째로 교체한다(server-missing 과 server-changed 모두).
+                skips = [thread_level]
+                thread_warnings = (
+                    [{"thread": thread.id, "reason": "server-missing"}]
+                    if thread_level == "server-missing"
+                    # server-changed 는 경고 열거값이 없다(cli.md §8 — status
+                    # 에는 없고 push 의 --dry-run/--json 만 decision.skip 으로
+                    # 보여준다). 그래도 앞서 쌓인 no-reply 등은 철회해야 한다.
+                    else []
+                )
             if not decision.resolve:
                 resolve_eligible = False
 
         if resolve_eligible and not review.me.can_resolve:
             decision.resolve = False
-            decision.skip = decision.skip or "no-resolve-permission"
+            skips.append("no-resolve-permission")
 
+        decision.skips = tuple(skips)
         out.warnings.extend(thread_warnings)
 
-        if decision.reply or decision.resolve or decision.skip or decision.record_hash:
+        if decision.reply or decision.resolve or decision.skips or decision.record_hash:
             out.decisions.append(decision)
 
     out.warnings += _standing_warnings(review, out.pending_resolves)
@@ -180,22 +240,27 @@ def _judge_against_server(
     current: model.Thread | None,
     *,
     force: bool,
-) -> None:
-    """스냅샷이 있을 때만 하는 판정 (cli.md §9 3단계)."""
+) -> str | None:
+    """스냅샷이 있을 때만 하는 판정 (cli.md §9 3단계).
+
+    반환값은 스레드 전체를 무효화하는 이유(`server-missing`/`server-changed`)
+    가 있으면 그 문자열, 없으면 `None` — `plan()` 이 이것으로 그 스레드의
+    `skips`/경고를 통째로 교체한다. 이 함수는 `decision.skips` 를 직접 건드
+    리지 않는다 — 교체 책임은 호출자 하나에만 있어야 두 곳에서 서로 다른
+    규칙으로 교체하는 일이 생기지 않는다.
+    """
     if current is None:
         # 보낼 곳이 없다. `--force` 로도 보내지 않는다 — `--force` 가 무시하는
         # 것은 "서버가 바뀌었다" 뿐이다 (결정 0011).
-        decision.skip = "server-missing"
         decision.reply, decision.resolve, decision.record_hash = "", False, None
-        return
+        return "server-missing"
     changed = (
         current.server.updated_at != thread.server.updated_at
         or current.server.note_count != thread.server.note_count
     )
     if changed and not force:
-        decision.skip = "server-changed"
         decision.reply, decision.resolve = "", False
-        return
+        return "server-changed"
     if decision.reply and _already_posted(current, decision.reply):
         # 2차 방어. POST 는 성공했는데 `pushed_hash` 기록 직전에 죽은 경우다.
         # 해시를 기록해야 한다(MUST) — 건너뛰기만 하면 다음 실행도 매번
@@ -206,6 +271,7 @@ def _judge_against_server(
         decision.reply = ""
     if decision.resolve and current.server.resolved:
         decision.resolve = False
+    return None
 
 
 def _already_posted(current: model.Thread, reply: str) -> bool:
@@ -232,7 +298,7 @@ def _standing_warnings(review: model.Review, pending_resolves: int) -> list[dict
             # json 안에만 남는다 (cli.md §8).
             out.append({"thread": thread.id, "reason": "push-failed"})
     if pending_resolves:
-        # 개별 이유는 각 Decision.skip 에 이미 있다 — 여기는 "총 N건" 집계
+        # 개별 이유는 각 Decision.skips 에 이미 있다 — 여기는 "총 N건" 집계
         # 경고 하나만 낸다(결정됨: thread=None, 스레드별로 중복하지 않는다).
         out.append({"thread": None, "reason": "no-resolve-permission"})
     if review.mr_state != "opened":
