@@ -70,6 +70,10 @@ def build_parser() -> argparse.ArgumentParser:
     push.add_argument("--publish", action="store_true", help="draft 를 일괄 발행한다")
     push.add_argument("--resolve", choices=["auto", "skip", "require"], default="auto")
 
+    open_cmd = sub.add_parser("open", help="MR 또는 스레드를 브라우저로 연다")
+    open_cmd.add_argument("--mr", type=int, default=None)
+    open_cmd.add_argument("--thread", default=None)
+
     sub.add_parser("doctor", help="환경을 진단한다")
 
     return parser
@@ -82,6 +86,7 @@ def dispatch(argv: list[str]) -> int:
 
     from mrq.commands import doctor as doctor_command
     from mrq.commands import listing as listing_command
+    from mrq.commands import open as open_command
     from mrq.commands import pull as pull_command
     from mrq.commands import push as push_command
     from mrq.commands import reanchor as reanchor_command
@@ -99,6 +104,7 @@ def dispatch(argv: list[str]) -> int:
         "reply": reply_command.run,
         "state": state_command.run,
         "push": push_command.run,
+        "open": open_command.run,
         "doctor": doctor_command.run,
     }
     return handlers[args.command](args)
