@@ -70,6 +70,24 @@ def test_pull_writes_validated_review_json(pullable, capsys):
     assert len(review.threads) == 8
 
 
+def test_pull_tolerates_transient_draft_notes_failure(pullable, glab, capsys):
+    # Important 4 — 502 같은 일시적 실패로 전체 pull 이 멈추면 안 된다.
+    # draft_notes 는 --draft 에만 필요한 부가 능력이다. false 로 기록하고
+    # 경고만 낸다 — 다음 `mrq pull` 이 갱신한다는 것도 알려야 한다.
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/draft_notes",
+        raw='{"message":"502 Bad Gateway"}',
+        status=502,
+    )
+
+    assert main(["pull"]) == 0
+
+    review = read_review(pullable)
+    assert review.capabilities.draft_notes is False
+    err = capsys.readouterr().err
+    assert "mrq pull" in err
+
+
 def test_pull_prints_summary(pullable, capsys):
     main(["pull"])
     out = capsys.readouterr().out

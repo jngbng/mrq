@@ -35,7 +35,8 @@ def run(args) -> int:
         if args.draft and not pre.capabilities.draft_notes:
             raise UsageError(
                 "이 GitLab 은 draft_notes API 를 지원하지 않습니다 (--draft 를 쓸 수 "
-                "없습니다). 일반 전송은 `mrq push` 입니다."
+                "없습니다). 일반 전송은 `mrq push` 입니다. 일시적인 네트워크 오류로 "
+                "이 값이 잘못 기록됐을 수 있습니다 — `mrq pull` 로 다시 확인하세요."
             )
 
     # `--publish` 단독은 sync·스냅샷 **둘 다** 생략한다(cli.md §9 `--draft`) —

@@ -112,12 +112,22 @@ def whoami() -> tuple[int, str]:
 def draft_notes_available(iid: int) -> bool:
     """가용성을 탐지만 한다. 미지원이면 `--draft` 를 명시적으로 거부한다.
 
-    404(이 GitLab 이 지원하지 않음)와 네트워크 장애를 지금은 똑같이 False 로
-    접는다. `GlabError.status` 로 구분할 수단은 생겼고, 구분해서 무엇을 할지는
-    `--draft` 를 만드는 12 단계의 몫이다.
+    `status == 404`(이 GitLab 이 draft_notes 를 지원하지 않음)만 "미지원"으로
+    확정해 `False` 를 돌려준다(Important 4). 그 외의 실패(네트워크 장애,
+    5xx, 권한 문제 등)는 **그대로 올린다** — 404 와 똑같이 `False` 로 접으면
+    "이 GitLab 은 draft_notes 를 지원하지 않는다" 는 틀린 결론이 영구히
+    기록된다. `pull` 이 그 값을 `capabilities.draft_notes` 로 저장하고,
+    `push --draft`/`doctor` 가 그 값만 보고 "GitLab 버전을 확인하라" 고
+    안내하는데, 실제로는 일시적인 502 였을 뿐이라면 엉뚱한 곳을 가리킨다.
+    호출자가 "확인 불가"(일시적)와 "미지원"(확정)을 구분할 수 있도록
+    `GlabError` 를 그대로 전파한다 — `pull`은 이를 못 확인한 것으로 보고
+    `False` 로 저장하고, `doctor`는 "확인 불가" 로 보고한다
+    (`_stdin_field` 와 같은 패턴).
     """
     try:
         glab.api(f"{PROJECT}/merge_requests/{iid}/draft_notes")
-    except GlabError:
-        return False
+    except GlabError as exc:
+        if exc.status == 404:
+            return False
+        raise
     return True

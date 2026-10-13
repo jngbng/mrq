@@ -1,7 +1,7 @@
 import pytest
 
 from mrq import mr, store
-from mrq.errors import MrDetectionError
+from mrq.errors import GlabError, MrDetectionError
 
 MR_1234 = {
     "iid": 1234,
@@ -112,17 +112,14 @@ def test_whoami(glab):
     assert mr.whoami() == (7, "bongya")
 
 
-def test_draft_notes_unavailable_is_false(glab):
-    assert mr.draft_notes_available(1234) is False
-
-
 def test_draft_notes_available_is_true(glab):
     glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
     assert mr.draft_notes_available(1234) is True
 
 
 def test_draft_notes_unavailable_on_404(glab):
-    # 이 GitLab 이 draft notes 를 지원하지 않는 경우.
+    # 이 GitLab 이 draft notes 를 지원하지 않는 경우 — 유일하게 "미지원"으로
+    # 확정할 수 있는 상태다.
     glab.route(
         "GET projects/:fullpath/merge_requests/1234/draft_notes",
         {"message": "404 Not found"},
@@ -131,13 +128,29 @@ def test_draft_notes_unavailable_on_404(glab):
     assert mr.draft_notes_available(1234) is False
 
 
-def test_draft_notes_unavailable_on_server_error(glab):
+def test_draft_notes_raises_on_server_error(glab):
+    # Important 4 — 502 같은 일시적 실패를 404(미지원)와 똑같이 `False` 로
+    # 접으면 "이 GitLab 은 draft_notes 를 지원하지 않는다" 는 틀린 결론이
+    # 영구히 기록된다(`pull` 이 그 값을 `capabilities.draft_notes` 로 쓴다).
+    # 404 가 아닌 실패는 호출자(`pull`/`doctor`)에게 그대로 올려 "확인 불가"
+    # 와 "미지원"을 구분하게 한다.
     glab.route(
         "GET projects/:fullpath/merge_requests/1234/draft_notes",
         {"message": "502 Bad Gateway"},
         status=502,
     )
-    assert mr.draft_notes_available(1234) is False
+    with pytest.raises(GlabError) as excinfo:
+        mr.draft_notes_available(1234)
+    assert excinfo.value.status == 502
+
+
+def test_draft_notes_raises_on_network_failure(glab):
+    # 라우트가 전혀 등록되지 않은 경우(가짜 glab 의 "등록되지 않은 경로")도
+    # status 가 없는 네트워크 실패와 같은 모양이다 — 404 가 아니므로 역시
+    # 올려야 한다.
+    with pytest.raises(GlabError) as excinfo:
+        mr.draft_notes_available(1234)
+    assert excinfo.value.status is None
 
 
 def test_detect_handles_special_characters_in_branch_name(git_repo, commit, glab):

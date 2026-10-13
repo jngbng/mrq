@@ -5,6 +5,7 @@ from __future__ import annotations
 import sys
 
 from mrq import SCHEMA_VERSION, anchor, discussions, model, mr, reanchor, store, surface
+from mrq.errors import GlabError
 
 
 def run(args) -> int:
@@ -17,7 +18,7 @@ def run(args) -> int:
     project, can_resolve = mr.project_info()
     user_id, username = mr.whoami()
     diff_refs = mr.diff_refs(info.iid)
-    draft_notes = mr.draft_notes_available(info.iid)
+    draft_notes = _draft_notes_available(info.iid)
     threads = discussions.to_threads(discussions.fetch(info.iid), username)
 
     with store.review_lock(root, info.iid):
@@ -77,6 +78,24 @@ def run(args) -> int:
     print(f"!{info.iid} {info.title} · threads {len(threads)} · unresolved {unresolved}")
     print(f"reanchored: {stats}   (head {diff_refs.head_sha[:7]})")
     return 0
+
+
+def _draft_notes_available(iid: int) -> bool:
+    """`mr.draft_notes_available`을 부르고, 404 가 아닌 실패는 "확인 못함"으로
+    접는다(Important 4). `pull` 전체를 이 탐지 하나의 실패로 멈추면 안 된다
+    — draft_notes 는 `--draft`에만 필요한 부가 능력이라, 일시적 502 로 pull
+    자체가 실패하는 것은 과하다. 재실행하면 갱신된다는 것을 알린다.
+    """
+    try:
+        return mr.draft_notes_available(iid)
+    except GlabError as exc:
+        print(
+            f"⚠ draft_notes 지원 여부를 확인할 수 없습니다 ({exc}) — "
+            "capabilities.draft_notes 를 일단 false 로 기록합니다. `mrq pull` 을 "
+            "다시 실행하면 갱신됩니다.",
+            file=sys.stderr,
+        )
+        return False
 
 
 def _previous(

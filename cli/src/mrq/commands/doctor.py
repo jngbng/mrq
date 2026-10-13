@@ -99,14 +99,7 @@ def _checks():
         yield Check("discussions", True, "--paginate --output ndjson 동작")
 
     yield _stdin_field()
-
-    drafts_ok = mr.draft_notes_available(info.iid)
-    yield Check(
-        "draft_notes",
-        drafts_ok,
-        "사용 가능" if drafts_ok else "사용 불가 (--draft 를 쓸 수 없습니다)",
-        "이 GitLab 버전이 draft_notes API 를 지원하지 않습니다",
-    )
+    yield _draft_notes(info.iid)
     yield Check(
         "resolve 권한",
         can_resolve,
@@ -154,6 +147,32 @@ def _stdin_field() -> Check:
     except MrqError as exc:
         return Check("stdin", False, str(exc), "glab 의 `-F field=@-` 전송을 확인하세요")
     return Check("stdin", True, "-F text=@- 동작")
+
+
+def _draft_notes(iid: int) -> Check:
+    """`draft_notes` 가용성. `mr.draft_notes_available`이 404 가 아닌 실패를
+    그대로 올리므로(Important 4) 여기서 "확인 불가"(일시적)와 "사용
+    불가"(확정된 미지원)를 가른다 — `_stdin_field`와 같은 패턴이다. 가짜
+    ✗("이 GitLab 버전은 미지원" 힌트)로 네트워크 블립을 보고하면 사용자가
+    엉뚱하게 버전을 뒤진다.
+    """
+    try:
+        ok = mr.draft_notes_available(iid)
+    except GlabError as exc:
+        if exc.status in (403, 404):
+            return Check("draft_notes", True, "확인 불가 (draft_notes API 없음/권한 없음)")
+        return Check(
+            "draft_notes",
+            True,
+            f"확인 불가 ({exc})",
+            "일시적 오류일 수 있습니다 — `mrq doctor` 를 다시 실행하세요",
+        )
+    return Check(
+        "draft_notes",
+        ok,
+        "사용 가능" if ok else "사용 불가 (--draft 를 쓸 수 없습니다)",
+        "이 GitLab 버전이 draft_notes API 를 지원하지 않습니다",
+    )
 
 
 def _storage(root: Path) -> Check:

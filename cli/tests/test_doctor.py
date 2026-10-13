@@ -161,3 +161,41 @@ def test_doctor_stdin_probe_failure_has_a_hint(
     out = capsys.readouterr().out
     line = _line(out, "stdin")
     assert "✗" in line and "→" in line
+
+
+def test_doctor_draft_notes_confirmed_unsupported_on_404(
+    git_repo, commit, checkout, glab, monkeypatch, capsys
+):
+    # Important 4 — 404 만이 "이 GitLab 은 draft_notes 를 지원하지 않는다"
+    # 를 확정할 수 있다. 이 경우는 진짜 ✗ 다 — 버전 힌트가 맞는 안내다.
+    sha = commit({"src/api/client.py": "x\n"})
+    checkout("feat/retry")
+    monkeypatch.chdir(git_repo)
+    _register_routes(glab, sha)
+    glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", status=404)
+
+    assert main(["doctor"]) == 1
+
+    out = capsys.readouterr().out
+    line = _line(out, "draft_notes")
+    assert "✗" in line and "사용 불가" in line and "→" in line
+
+
+def test_doctor_draft_notes_reports_unavailable_without_failing_on_transient_error(
+    git_repo, commit, checkout, glab, monkeypatch, capsys
+):
+    # Important 4 — 502 같은 일시적 실패는 "미지원"이 아니라 "확인 불가"다.
+    # 거짓 ✗ 로 "GitLab 버전을 확인하라"고 안내하면 사용자가 엉뚱한 곳을
+    # 뒤진다. `doctor` 전체 종료 코드도 이 때문에 떨어지면 안 된다.
+    sha = commit({"src/api/client.py": "x\n"})
+    checkout("feat/retry")
+    monkeypatch.chdir(git_repo)
+    _register_routes(glab, sha)
+    glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", status=502)
+
+    assert main(["doctor"]) == 0
+
+    out = capsys.readouterr().out
+    line = _line(out, "draft_notes")
+    assert "✗" not in line
+    assert "확인 불가" in line

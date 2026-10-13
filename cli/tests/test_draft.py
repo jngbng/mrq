@@ -141,7 +141,7 @@ def test_draft_refuses_when_listing_fails(pushable, glab):  # noqa: F811
     ]
 
 
-def test_draft_rejected_when_capability_missing(pushable, glab):  # noqa: F811
+def test_draft_rejected_when_capability_missing(pushable, glab, capsys):  # noqa: F811
     set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="확인했습니다")
     path = store.review_json_path(pushable, 1234)
     review = model.loads(path.read_text(encoding="utf-8"))
@@ -152,6 +152,10 @@ def test_draft_rejected_when_capability_missing(pushable, glab):  # noqa: F811
 
     # 조용히 일반 notes 경로로 빠지면 안 된다(MUST NOT).
     assert not [c for c in glab.calls() if c["argv"][1].endswith("/notes")]
+    # Important 4 — 이 값이 일시적 네트워크 오류로 false 가 됐을 수 있다.
+    # 사용자가 GitLab 버전만 뒤지지 않도록 복구 경로(`mrq pull`)를 알려준다.
+    err = capsys.readouterr().err
+    assert "mrq pull" in err
 
 
 def test_publish_clears_reply_only_when_body_still_matches(pushable, glab):  # noqa: F811
