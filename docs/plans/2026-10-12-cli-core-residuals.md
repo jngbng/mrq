@@ -12,7 +12,18 @@ R1(`model`의 예외가 종료 코드 계약을 빠져나가는 것)과 R2(`pull
 남겨 뒀다). 단위 테스트가 전부 통과하는 상태에서 나온 것들이므로, 셋 다 "테스트가
 덮지 못한 모양의 입력"이라는 공통점이 있다.
 
+**R6(멀티라인 앵커)과 R7(UTC 렌더)은 브랜치 `jbseo/pre_step3`에서 해소됐다.**
+둘 다 손으로 쓴 픽스처가 구현과 같은 틀린 가정을 공유해 테스트를 통과하고 있던
+경우였다. 규범은 `reanchoring.md` §3·§5.4와 `review-md.md` §5에, 결정은
+[0009](../decisions/0009-render-timestamps-in-local-timezone.md)에 남겼다.
+
 ## 계획 3(`push`) 전에 반드시 다룰 것
+
+R3·R4는 **계획 3에 통합하지 않고 그 전 과제로 남긴다.** 둘은 "`push`를 쓸 수
+없다"가 아니라 "`push`의 테스트를 쓸 수 없다"는 문제다 — 가짜 `glab`이 상태
+코드도 2페이지 응답도 호출별 다른 응답도 만들지 못한다. 계획 3 안에 넣으면
+멱등성·크래시 복구를 TDD로 쓸 수 없고 "구현 먼저, 테스트는 하네스를 고친 뒤"가
+된다.
 
 **R3. `glab.api`의 시그니처가 `push`를 버틸 수 없다.** (`cli.md` §3에 이미 기록)
 두 문제가 같은 뿌리에서 나온다.
@@ -49,54 +60,6 @@ R1(`model`의 예외가 종료 코드 계약을 빠져나가는 것)과 R2(`pull
 표시만 하는 것이다. 그 표시를 렌더링·`status`·`push`가 어떻게 다룰지가 계획 2·3의
 영역이라 미뤘다. `test_pull_drops_threads_removed_on_server`가 현재의 손실 동작을
 고정하고 있으므로 완화책이 들어오면 그 테스트가 바뀐다.
-
-**R6. 여러 줄 코멘트(`position.line_range`)가 범위의 끝에 앵커를 걸고 span을 잃는다.**
-`reanchoring.md` §5.4는 "`start`와 `end`를 각각 1~3단계로 매핑한다"를 규범으로
-요구하는데, **`line_range.start`를 읽는 코드가 없다**. `anchor.extract`는
-`position.new_line`을 앵커 줄로 쓰고 `reanchor._range_end`는 `line_range.end.new_line`만
-읽는다 — 즉 구현은 `position.new_line == line_range.start.new_line` 을 가정한다.
-
-**GitLab은 그 가정을 보장하지 않는다.** 같은 범위(14~18)에 `new_line`만 바꿔 두 번
-만들어 봤더니 보낸 값을 그대로 저장했다 — 정규화하지 않는다:
-
-| 보낸 `new_line` | 저장된 `new_line` | `line_range` | discussion |
-|---|---|---|---|
-| 18 (범위의 끝) | 18 | 14 / 18 | `63e7083a…` |
-| 14 (범위의 시작) | 14 | 14 / 18 | `985e4402…` |
-
-따라서 `new_line`은 범위의 어느 쪽이든 될 수 있고, 끝 줄로 들어온 경우 현재 구현은
-`location = {line: 18, line_end: 18}` 을 만든다 — 시작 줄을 가리키지 못하고 범위도
-비어 있다. (GitLab UI가 어느 쪽을 보내는지는 확인하지 않았다. 확인할 필요도 없다 —
-`line_range`가 있으면 그것을 읽는 것이 §5.4가 요구하는 동작이다.)
-
-실측(MR `!1`, discussion `63e7083a…`, `src/api/client.py` 14~18):
-
-```
-position.new_line  : 18
-position.line_range: start.new_line 14 / end.new_line 18
-location           : {"line": 18, "line_end": 18, "confidence": "exact", "method": "git-diff"}
-anchor.line        : '    raise RuntimeError("재시도 소진")'   ← 18행 내용
-헤더 렌더          : ## [ ] src/api/client.py:18
-```
-
-`anchor`가 끝 줄 내용을 담으므로 재앵커링은 끝 줄을 따라가고, 그 자체로는 일관되지만
-스펙과 어긋난다. 고칠 지점은 둘이다 — `anchor.extract`가 `line_range`가 있을 때
-`start`의 줄 번호를 앵커로 쓰고, `_locate`가 `start`/`end`를 각각 매핑한 뒤 §5.4의
-강등 규칙(하나라도 실패 → `start`만, `line_end: null`, `fuzzy`)을 적용해야 한다.
-계획 4·5의 에디터가 `location.line`~`line_end`로 영역을 표시하므로, 지금 상태로는
-여러 줄 지적이 한 줄로 보인다.
-
-`reanchoring.md` §8 테스트 10번(`test_multiline_range_maps_both_ends`)은 `new_line=3`
-에 `line_range` 3~4를 주므로 **구현과 같은 가정을 공유한다** — 그래서 통과한다.
-고칠 때 그 테스트도 두 모양(시작/끝) 둘 다로 늘려야 한다. MR `!1` 에 두 모양이 다
-들어 있으니 픽스처로 쓸 수 있다.
-
-**R7. 노트 시각이 UTC로 렌더된다.** GitLab은 `created_at`을 UTC로 주고 렌더러는
-기록된 오프셋 그대로 출력한다(계획 2에서 골든 테스트의 결정성을 위해 그렇게 정했다).
-결과: 07:55 KST에 달린 코멘트가 `> **@jngbng** 2026-10-12 22:55` 로 보인다. 요약 줄의
-`pulled`/`synced`는 우리가 만든 로컬 시각이라 맞게 나오므로, 같은 화면에 9시간 차이가
-나는 두 시각이 섞인다. 로컬 타임존으로 변환하고 골든 테스트는 `TZ`를 고정하는 쪽이
-맞다 (`review-md.md` §5의 인용 형식, `render._stamp`).
 
 **R8. 답글을 썼는데 상태가 `todo`면 조용히 전송되지 않는다.** `data-model.md` §4.7의
 의도대로다(`todo` → push는 아무것도 하지 않음) — 그리고 `status`의 `push replies 0`이
@@ -140,7 +103,7 @@ anchor.line        : '    raise RuntimeError("재시도 소진")'   ← 18행 �
 
 ## 테스트 스위트
 
-338개가 45초. 가장 느린 테스트가 0.51초이고 비용은 함수 스코프 `git_repo`
+346개가 50초. 가장 느린 테스트가 0.51초이고 비용은 함수 스코프 `git_repo`
 픽스처(테스트당 git 서브프로세스 약 6회)가 지배한다. 성장이 테스트당 약 40ms로
 선형이므로 지금의 네 배에서 30초쯤 된다. 실제 git 저장소를 쓰는 것은 옳은 선택이고
 (`reanchoring.md` §8이 MUST로 요구하며, `.mrq/` 가시성·`git mv`·rename pathspec

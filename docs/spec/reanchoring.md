@@ -58,9 +58,23 @@ git fetch origin <source_branch>                    # 위가 막혀 있으면 �
 
 | 필드 | 내용 |
 |---|---|
-| `line` | `position.new_line` 위치의 줄. 개행 제외, 그 외는 바이트 그대로 |
+| `line` | **시작 줄**의 내용. 개행 제외, 그 외는 바이트 그대로 |
 | `context_before` | 바로 앞 **3줄**. 파일 시작에 걸리면 있는 만큼 |
 | `context_after` | 바로 뒤 **3줄**. 파일 끝에 걸리면 있는 만큼 |
+
+**시작 줄은 `position.new_line`이 아니다**(MUST). `line_range`가 있으면
+`line_range.start`에서 읽는다 — `position.new_line`/`old_line`은 범위의 **어느 쪽이든**
+될 수 있다. GitLab은 보낸 값을 정규화하지 않고 그대로 저장한다. 실측(MR `!1`):
+
+| 보낸 `new_line` | 저장된 `new_line` | `line_range` |
+|---|---|---|
+| 18 (범위의 끝) | 18 | 14 / 18 |
+| 14 (범위의 시작) | 14 | 14 / 18 |
+
+코멘트가 붙은 쪽을 따라간다 — `position.new_line`이 있으면 `start.new_line`,
+없으면 `start.old_line`. 범위가 old/new 양쪽에 걸쳐 그 쪽 끝점이 비어 있으면
+`position` 값으로 되돌아간다. `anchor.hunk`를 고를 때도 같은 시작 줄을 쓴다(MUST) —
+범위의 끝으로 고르면 시작 줄이 담기지 않은 hunk를 붙이게 된다.
 
 3줄로 정한 이유는 §5.2 a단계의 중복 후보 점수 계산에 필요한 최소량이다. 더 늘리면
 json만 커지고 점수 품질은 거의 개선되지 않는다.
@@ -196,10 +210,16 @@ context 줄이 파일의 **마지막 줄**이면 아래에 붙일 자리가 없�
 
 ### 5.4 멀티라인 (`position.line_range`)
 
-`start`와 `end`를 각각 1~3단계로 매핑한다.
+`start`와 `end`를 각각 1~3단계로 매핑한다. **`start`는 §3과 같은 규칙으로 구한다**
+(MUST) — `position.new_line`이 아니라 `line_range.start`다.
 
 - 둘 다 성공 → `location.line` / `location.line_end`
 - 하나라도 실패 → `start`만 사용, `line_end: null`, `confidence`를 `fuzzy`로 강등
+- 범위가 old/new 양쪽에 걸쳐 코멘트가 붙은 쪽의 끝점이 비어 있으면 "실패"로
+  다룬다 — 반대쪽 좌표계의 줄 번호를 끝으로 쓰면 그럴듯한 틀린 범위가 된다
+
+`review.md` 헤더는 시작 줄만 쓴다(`<path>:<line>`, `review-md.md` §3). 범위는
+`review.json`으로만 전달되고, 영역 표시는 에디터의 몫이다.
 
 ---
 
@@ -261,7 +281,7 @@ reanchored: exact 12 · fuzzy 2 · stale 1   (head abc1234)
 | 7 | 파일 rename | `exact`, `location.path`가 새 경로 |
 | 8 | 파일 삭제 | `stale` |
 | 9 | 동일 내용 줄이 창 안에 여럿 | context 점수로 올바른 줄, `fuzzy` |
-| 10 | 멀티라인 `line_range` | `line` + `line_end` |
+| 10 | 멀티라인 `line_range` — `position.new_line`이 범위의 **시작**인 모양과 **끝**인 모양 둘 다 | 두 모양이 같은 `line` + `line_end` |
 | 11 | old-side(삭제된 줄) 코멘트 | `fuzzy` / `context-anchor` |
 | 12 | `head_sha` fetch 실패 | 경고 출력, `anchor-search`로 degrade |
 
