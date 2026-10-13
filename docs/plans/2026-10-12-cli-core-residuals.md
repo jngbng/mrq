@@ -17,42 +17,12 @@ R1(`model`의 예외가 종료 코드 계약을 빠져나가는 것)과 R2(`pull
 경우였다. 규범은 `reanchoring.md` §3·§5.4와 `review-md.md` §5에, 결정은
 [0009](../decisions/0009-render-timestamps-in-local-timezone.md)에 남겼다.
 
+**R3·R4도 같은 전 과제에서 해소됐다.** 규범은 `spec/cli.md` §3 과
+`spec/testing.md` §2 에, 결정은
+[0010](../decisions/0010-glab-status-via-exception.md)에 있다. 그 조사에서 R3 의
+전제 둘(쿼리 직렬화, `--input` 필요성)이 틀렸던 것도 0010 에 기록했다.
+
 ## 계획 3(`push`) 전에 반드시 다룰 것
-
-R3·R4는 **계획 3에 통합하지 않고 그 전 과제로 남긴다.** 둘은 "`push`를 쓸 수
-없다"가 아니라 "`push`의 테스트를 쓸 수 없다"는 문제다 — 가짜 `glab`이 상태
-코드도 2페이지 응답도 호출별 다른 응답도 만들지 못한다. 계획 3 안에 넣으면
-멱등성·크래시 복구를 TDD로 쓸 수 없고 "구현 먼저, 테스트는 하네스를 고친 뒤"가
-된다.
-
-**R3. `glab.api`의 시그니처가 `push`를 버틸 수 없다.** (`cli.md` §3에 이미 기록)
-두 문제가 같은 뿌리에서 나온다.
-
-- **지금 당장**: `mr.detect`가 브랜치 이름을 경로에 그대로 보간한다
-  (`?source_branch={branch}&...`). `#`·`&`·`%`·`+`를 담은 적법한 브랜치 이름이
-  요청을 망가뜨린다 — `feat/#123`은 프래그먼트에서 잘려 GitLab이
-  `source_branch=feat/`를 보고, 존재하는 MR에 "열린 MR이 없습니다"가 나온다.
-  `fields`로 대체할 수 없다 — `-F` 값은 JSON 요청 **본문**으로 가고 쿼리
-  직렬화는 `--input` 모드에서만 일어난다(glab 1.114로 확인). `urllib.parse.urlencode`를
-  거치는 `query: dict[str, str]`를 추가해야 한다.
-- **계획 3**: `local.push_error.status`를 채울 수 없고, `check=False`가 403·404·
-  네트워크 장애를 모두 `None`으로 접는다. `draft_notes_available`은 이미 네트워크
-  장애를 `draft_notes: false`로 기록한다. `glab api -i/--include`가 응답 헤더를
-  출력하므로 `api()`를 `(status: int, data: Any)` 형태로 바꾸면 "실패"와 "성공했지만
-  본문이 비었음"도 함께 구분된다.
-- **`--input` 모드에는 `Content-Type` 을 직접 붙여야 한다** (2026-10-13 실측).
-  `glab api --input -` 만 쓰면 GitLab이 `HTTP 415 The provided content-type '' is
-  not supported` 를 돌려준다. `-H "Content-Type: application/json"` 을 함께 줘야
-  한다. 그리고 `-F "position[new_line]=15"` 식 bracket 키는 중첩 JSON으로 가지
-  않아 **GitLab이 조용히 무시한다** — 위치 코멘트를 만들려다 위치 없는 스레드를
-  만들고도 성공 응답을 받는다. 위 `query: dict` 를 넣을 때 이 둘을 같이 처리할 것.
-
-**R4. 가짜 `glab` 하네스가 페이지네이션과 상태 코드를 표현할 수 없다.**
-`cli/tests/bin/glab`은 `"<METHOD> <path>"` 키마다 응답 파일 하나를 매핑한다.
-따라서 2페이지 이상 응답, 같은 경로에 대한 호출별 다른 응답, HTTP 상태 코드를
-만들 수 없다. `testing.md` §3이 요구하는 2페이지 픽스처가 이 때문에 빠져 있다.
-계획 3의 push 멱등성·크래시 복구 테스트(`testing.md` §5)에 셋 다 필요하다.
-`MRQ_GLAB_FAIL_AT`이 확장의 올바른 모양이다. R3과 같은 변경에서 함께 하는 것이 좋다.
 
 **R5. 스레드가 응답에서 사라졌다 다시 나타나면 `local.*`가 영구 소실된다.**
 `data-model.md` §6에 결정과 미루는 이유가 기록되어 있다. 완화책은 `local.reply`가
@@ -68,6 +38,19 @@ R3·R4는 **계획 3에 통합하지 않고 그 전 과제로 남긴다.** 둘�
 낫다. 경고는 §7의 경고 목록에 한 행을 더하는 일이고 `push`의 동작은 그대로 둔다.
 계획 3에서 `push`를 만들 때 함께 결정하면 된다.
 
+
+## 위치 코멘트를 새로 만들 때 필요한 것 (future work)
+
+`mrq` 는 기존 스레드에 답글만 단다. 새 위치 코멘트를 만드는 기능
+(`mrq-design.md` §6 의 future work)을 할 때 아래가 걸린다. 2026-10-13 실측이다.
+
+- `-F "position[new_line]=15"` 식 bracket 키는 JSON 본문에서 중첩으로 가지
+  않는다. glab 1.114 는 조용히 무시했고(위치 없는 스레드가 성공 응답과 함께
+  만들어진다), 최신 문서는 에러로 거부한다고 적는다. 어느 쪽이든 쓰면 안 된다.
+- 중첩은 `-F 'position={"position_type":"text","new_line":15}'` 로 보낸다.
+  `--input` 은 필요 없다.
+- `--input` 을 쓴다면 `-H "Content-Type: application/json"` 을 함께 줘야 한다.
+  빼면 GitLab 이 `HTTP 415` 를 돌려준다.
 
 ## 코드 모양 (다음 계획을 쉽게 만드는 것들)
 

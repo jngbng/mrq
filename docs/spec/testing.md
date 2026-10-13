@@ -35,6 +35,41 @@ cli/tests/bin/glab
 
 매칭 실패를 조용히 통과시키면 안 된다(MUST NOT). 테스트가 거짓 통과한다.
 
+### `routes.json` 계약
+
+라우트 값은 **응답 목록**이다. 같은 키로 들어온 호출의 순서대로 소비하고, 목록이
+소진되면 마지막 것이 반복된다 — 크래시 복구 테스트가 같은 명령을 재실행하므로
+소진을 에러로 만들면 하네스 때문에 실패한다. 호출 수는 **경로별로** 센다.
+
+```jsonc
+{
+  "GET projects/:fullpath/merge_requests/1234/discussions": [
+    { "status": 200, "pages": ["p0.ndjson", "p1.ndjson"] }
+  ],
+  "POST .../discussions/abc/notes": [
+    { "status": 201, "file": "r3.json" },
+    { "status": 403, "body": "{\"message\":\"403 Forbidden\"}" }
+  ]
+}
+```
+
+### 가짜 glab 은 진짜 glab 이 내는 것을 낸다
+
+"우리 파서가 읽기 쉬운 것"을 내면 안 된다(MUST NOT). 어긋나면 실제 GitLab 에서만
+깨지는 코드가 테스트를 통과한다.
+
+- `-i` 가 argv 에 있을 때만 헤더를 낸다. **상태줄은 LF, 헤더는 CRLF, 구분자는
+  CRLFCRLF** (glab 1.114 실측)
+- `-i` 와 `--paginate` 가 함께면 **페이지마다** 헤더 블록을 낸다
+- `--paginate` 가 없으면 `pages` 중 **첫 페이지만** 준다
+- `status >= 400` 이면 exit 1, stdout 에 에러 본문, stderr 에
+  `glab: <메시지> (HTTP <코드>)`
+
+`MRQ_GLAB_FAIL_AT` 은 HTTP 실패가 아니라 **프로세스 사망**을 흉내 내는 별개의
+장치다. §6 의 "N 번째 호출에서 사망" 이 그것을 쓴다. 죽은 호출도 응답 목록을
+소비한 것으로 센다 — "요청은 갔는데 그 뒤에 죽었다" 가 크래시 복구가 다루는
+모양이다.
+
 ### 타임존을 고정한다
 
 렌더러는 시각을 로컬 타임존으로 변환한다(`review-md.md` §5). 따라서 골든의
@@ -82,7 +117,8 @@ UTC, 밀리초, `Z` 접미사(`"2026-10-12T23:07:20.443Z"`). 손으로 쓴 `+09:
 - 서버에서 이미 resolve된 스레드
 - `resolvable: false` 스레드
 - `position`이 없는 general 코멘트
-- 2페이지 이상 응답 (ndjson 스트리밍)
+- 2페이지 이상 응답 (ndjson 스트리밍) — `discussions-page0.ndjson` /
+  `discussions-page1.ndjson`. 라우트에 `pages` 로 등록한다
 - `permissions.project_access.access_level`이 20인 프로젝트 (403 경로)
 - `position_type`이 `image`인 노트
 
