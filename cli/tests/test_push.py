@@ -3,8 +3,9 @@ from pathlib import Path
 
 import pytest
 
-from mrq import discussions, model, push, store, surface
+from mrq import discussions, model, push, store, surface, transport
 from mrq.__main__ import main
+from mrq.errors import GlabError
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
 
@@ -564,9 +565,11 @@ def test_push_posts_reply_and_resolves(pushable, glab):
 
 
 def test_push_sends_fenced_body_byte_for_byte(pushable, glab):
-    # Review Focus 3. 코드 펜스·표·CRLF 가 섞인 답글이 그대로 가야 한다.
+    # Review Focus 3. 코드 펜스·표·CRLF 가 섞인 답글이 그대로 가야 한다. 펜스
+    # 내부는 실제 CRLF 로 둬 LF 와 섞인 본문이 그대로(변환 없이) 전송되는지도
+    # 검증한다 — 리뷰가 "주석이 약속한 것과 리터럴이 다르다" 고 지적한 지점.
     body = (
-        "다음과 같이 고쳤습니다\n\n```python\nif x:\n    pass\n```\n\n"
+        "다음과 같이 고쳤습니다\n\n```python\r\nif x:\r\n    pass\r\n```\n\n"
         "| 전 | 후 |\n|---|---|\n| 1 | 2 |"
     )
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply=body)
@@ -607,21 +610,38 @@ def test_push_twice_sends_nothing_the_second_time(pushable, glab):
     assert len(writes) == 2, "두 번째 push 가 쓰기 요청을 다시 보냈다"
 
 
-def test_push_flushes_json_after_each_thread(pushable, glab):
+def test_push_flushes_json_after_each_thread(pushable, glab, monkeypatch):
+    # Important 2 — `glab.fail_at` 로 두 번째 POST 를 "exit 1" 시키면 `_send`
+    # 가 그 실패를 잡아 루프를 끝까지 돈다. 그 경로는 루프가 끝난 뒤 한 번만
+    # flush 해도 디스크 결과가 바이트 단위로 같아, "스레드마다 flush 한다" 는
+    # MUST 를 실제로는 검증하지 못한다. 대신 두 번째 스레드에서 **진짜로
+    # 죽어서**(비정상 예외가 `_send` 를 빠져나간다) 그 뒤로는 아무것도 쓰지
+    # 않는 경로와 "루프 안에서 매번 쓴다" 는 경로를 구분한다. `transport`
+    # 자체를 패치하는 것은 네트워크 경계(가짜 glab)를 건너뛰는 것이 아니다 —
+    # 가짜 glab 의 어떤 응답으로도 "프로세스가 죽었다" 를 표현할 수 없으므로
+    # 여기서만 그 모양을 만든다.
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="첫 번째")
     _set_local(pushable, "b2c3d4e5f6a1", state="replied", reply="두 번째")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
-    glab.route(NOTES.format(did="b2c3d4e5f6a1"), {"id": 9002}, status=201)
-    # 호출 순서는 1 = discussions GET(스냅샷), 2 = 첫 POST, 3 = 두 번째 POST 다.
-    # 가짜 glab 은 **로그에 기록한 뒤** 죽으므로 "요청은 갔는데 그 뒤에 실패"
-    # 라는 모양이 된다 (testing.md §2).
-    glab.fail_at(3)
 
-    assert main(["push"]) == 4
+    original_post_reply = transport.post_reply
+
+    def _die_on_second_thread(iid, discussion_id, body):
+        if discussion_id == "b2c3d4e5f6a1":
+            raise RuntimeError("프로세스가 죽었다")
+        return original_post_reply(iid, discussion_id, body)
+
+    monkeypatch.setattr(transport, "post_reply", _die_on_second_thread)
+
+    with pytest.raises(RuntimeError):
+        main(["push"])
 
     review = _read(pushable)
     first = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
     second = next(t for t in review.threads if t.id == "b2c3d4e5f6a1")
+    # 첫 스레드는 완전히 끝나 flush 됐다 — 두 번째가 죽기 **전** 디스크에
+    # 반영됐다는 뜻이고, 루프가 끝난 뒤 한 번만 쓰는 구현이었다면 이 값들은
+    # 전부 죽기 전 상태(빈 pushed_hash, 원래 reply)로 남아 있어야 한다.
     assert first.local.pushed_hash == push.body_hash("첫 번째")
     assert first.local.reply == ""
     # 죽은 쪽은 답글이 그대로 남아 재실행으로 복구된다.
@@ -705,6 +725,34 @@ def test_push_keeps_reply_when_post_fails(pushable, glab):
     assert target.local.push_error["retryable"] is True
 
 
+def test_push_does_not_resolve_when_reply_fails(pushable, glab):
+    # Important 1 — "done" + reply 는 POST 와 PUT 둘 다를 만든다. POST 가
+    # 실패하면 그 스레드는 아직 "done" 이 아니므로 resolve 를 시도하면 안
+    # 된다 — 리뷰어가 "답글 없이 닫힌 스레드" 를 보게 된다. resolve 가 성공해
+    # `push_error = None` 으로 되돌리면 §9 가 요구하는 reply 실패 기록도
+    # 사라져 `status` 의 `push-failed` 경고가 다시는 뜨지 않는다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(
+        NOTES.format(did="a1b2c3d4e5f6"),
+        raw='{"message":"502 Bad Gateway"}',
+        status=502,
+    )
+    # 성공했을 resolve 라우트 — 그래도 호출되면 안 된다.
+    glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
+
+    assert main(["push"]) == 4
+
+    puts = [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "PUT"
+    ]
+    assert not puts, "답글이 실패했는데도 resolve 를 시도했다"
+    target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.push_error["op"] == "reply"
+    assert target.local.reply == "확인했습니다"
+
+
 def test_push_refuses_on_a_different_branch(pushable, checkout, glab):
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="보내야 한다")
     checkout("other/branch")
@@ -742,3 +790,80 @@ def test_push_stops_on_sync_conflict_without_sending(pushable, glab):
         for c in glab.calls()
         if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
     ]
+
+
+def test_push_resolve_require_without_permission_refuses_before_sending(pushable, glab):
+    # Minor 4 — §9 는 `require` 에 권한이 없으면 "push 를 시작하지 않고 exit 1"
+    # 이라고 쓴다. sync(mdsync.perform) 보다 앞서 끊어야 글자 그대로 맞는다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    review.me.can_resolve = False
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["push", "--resolve", "require"]) == 1
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_push_failed_repull_does_not_override_send_result(pushable, glab, monkeypatch):
+    # Minor 6a — repull(§9 5단계) 이 실패해도 전송 결과는 이미 json 에 있다
+    # (MUST). `discussions.fetch` 를 두 번째 호출(=repull 의 조회)에서만
+    # 실패시켜 push 자신의 사전 판정은 그대로 두고 repull 만 네트워크 실패로
+    # 만든다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
+
+    original_fetch = discussions.fetch
+    calls = {"n": 0}
+
+    def _fail_second_fetch(iid):
+        calls["n"] += 1
+        if calls["n"] == 2:
+            raise GlabError("네트워크 실패", status=None)
+        return original_fetch(iid)
+
+    monkeypatch.setattr(discussions, "fetch", _fail_second_fetch)
+
+    assert main(["push"]) == 0
+
+    target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.reply == ""
+    assert target.local.pushed_hash == push.body_hash("확인했습니다")
+
+
+def test_push_returns_parse_error_without_sending(pushable, glab):
+    # Minor 6b — review.md 파싱 에러는 exit 2 이고 아무것도 쓰지 않는다
+    # (닫히지 않은 코드 펜스가 트리거다, cli.md §5).
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="답글")
+    md_path = store.review_md_path(pushable, 1234)
+    text = md_path.read_text(encoding="utf-8")
+    md_path.write_text(text + "\n```python\nif True:\n    pass\n", encoding="utf-8")
+
+    assert main(["push"]) == 2
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_push_json_keeps_stdout_as_a_single_json_object(pushable, glab, capsys):
+    # Important 3 — repull(=pull.run) 이 사람용 요약 두 줄을 stdout 에 찍는다.
+    # `--json` 일 때 그 줄이 `_report` 의 JSON 객체와 함께 stdout 에 섞이면
+    # cli.md §2 의 "stdout 은 순수 JSON 객체 하나" 를 깬다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
+
+    assert main(["push", "--json"]) == 0
+
+    out = capsys.readouterr().out
+    payload = json.loads(out)
+    assert payload["pushed"]["replies"] == 1
