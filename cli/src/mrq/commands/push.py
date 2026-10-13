@@ -33,26 +33,29 @@ def run(args) -> int:
                 "`--resolve auto` 로 답글만 보낼 수 있습니다."
             )
 
-    with store.review_lock(root, iid):
-        outcome = mdsync.perform(root, iid, path)
-        if outcome.errors:
-            return mdsync.report_errors(outcome.errors, json_mode=args.json)
-        if outcome.conflicts:
-            return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
-        review = outcome.review
-        for warning in outcome.warnings:
-            print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
+    # `--publish` 단독은 sync·스냅샷 **둘 다** 생략한다(cli.md §9 `--draft`) —
+    # 발행은 서버에 이미 있는 draft 를 내보내는 일이라 로컬 review.md 와
+    # 무관하다. md 에 파싱 에러나 충돌이 있어도, 이미 사용자 손을 떠난 draft 를
+    # 발행하지 못하게 막으면 안 된다.
+    publish_only = args.publish and not args.draft
 
-        # `--publish` 단독은 발행할 draft 가 이미 있고 대상 판정이 필요 없다
-        # (cli.md §9 `--draft`) — 전체를 한 번만 조회한다(MUST)는 그 판정이
-        # 실제로 필요할 때만 적용된다. 스레드별 GET 은 N+1 이다.
-        publish_only = args.publish and not args.draft
-        snapshot = (
-            None
-            if publish_only
-            else discussions.to_threads(discussions.fetch(iid), review.me.username)
-        )
-        sheet = push.plan(review, snapshot=snapshot, resolve=args.resolve, force=args.force)
+    with store.review_lock(root, iid):
+        if publish_only:
+            review = model.loads(path.read_text(encoding="utf-8"))
+            sheet = push.plan(review, resolve=args.resolve, force=args.force)
+        else:
+            outcome = mdsync.perform(root, iid, path)
+            if outcome.errors:
+                return mdsync.report_errors(outcome.errors, json_mode=args.json)
+            if outcome.conflicts:
+                return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
+            review = outcome.review
+            for warning in outcome.warnings:
+                print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
+
+            # 전체를 한 번만 조회한다(MUST). 스레드별 GET 은 N+1 이다.
+            snapshot = discussions.to_threads(discussions.fetch(iid), review.me.username)
+            sheet = push.plan(review, snapshot=snapshot, resolve=args.resolve, force=args.force)
 
         if args.dry_run:
             return _report_dry_run(review, sheet, json_mode=args.json)
@@ -68,12 +71,13 @@ def run(args) -> int:
                     "이 GitLab 은 draft_notes API 를 지원하지 않습니다 (--draft 를 쓸 수 "
                     "없습니다). 일반 전송은 `mrq push` 입니다."
                 )
-            failures = _run_draft(root, review, sheet, args)
+            failures, pushed = _run_draft(root, review, sheet, args, json_mode=args.json)
         else:
             failures = _send(root, review, sheet)
+            pushed = None
 
     _repull(iid, json_mode=args.json)
-    return _report(sheet, failures, json_mode=args.json)
+    return _report(sheet, failures, json_mode=args.json, pushed=pushed)
 
 
 # `push.SKIP_REASONS` 와 같은 집합을 덮어야 한다. 빠진 값이 있으면 그 스레드의
@@ -220,33 +224,62 @@ def _record_failure(thread: model.Thread, op: str, exc: GlabError) -> dict:
     }
 
 
-def _run_draft(root, review: model.Review, sheet: push.Plan, args) -> list[dict]:
+def _run_draft(
+    root, review: model.Review, sheet: push.Plan, args, *, json_mode: bool
+) -> tuple[list[dict], dict[str, int]]:
     """draft 생성과 발행. 결정 0012.
 
     중복 방어는 `GET draft_notes` 한 번이 전부다(MUST) — `pushed_hash` 가 아직
     없으므로 두 겹이 아니다. 조회가 실패하면 draft 를 만들지 않는다: 방어 없이
     만들면 재실행이 draft 를 복제하고, 복제된 draft 는 mrq 가 지울 수 없다.
+
+    `pushed`(replies/resolves)는 **실제로 나간 것**만 센다 — draft 생성은
+    전송이 아니므로 아무것도 만들지 않았을 때도 `{0, 0}`이다. `--publish`가
+    같이 오면 발행된 draft 수로 덮어쓴다.
     """
     drafts = transport.list_drafts(review.iid)  # GlabError → exit 5
     failures: list[dict] = []
+    pushed = {"replies": 0, "resolves": 0}
     if args.draft:
-        failures += _create_drafts(root, review, sheet, drafts)
+        _created, create_failures = _create_drafts(root, review, sheet, drafts, json_mode=json_mode)
+        failures += create_failures
     if args.publish:
         if args.draft:
             # 방금 만든 draft 는 위 조회 결과에 없다 — 발행 뒤 pushed_hash
             # 기록·reply 정리가 그 스레드만 건너뛰지 않도록 다시 조회한다.
             drafts = transport.list_drafts(review.iid)
-        failures += _publish(root, review, drafts, force=args.force)
-    return failures
+        published, publish_failures = _publish(
+            root, review, drafts, force=args.force, json_mode=json_mode
+        )
+        failures += publish_failures
+        pushed = published
+    return failures, pushed
 
 
-def _create_drafts(root, review: model.Review, sheet: push.Plan, drafts: list[dict]) -> list[dict]:
+def _ours(review: model.Review, draft: dict) -> bool:
+    """이 draft 가 review 의 스레드에 걸려 있는가 — `discussion_id` 로만 본다.
+
+    body 비교는 여기 쓰지 않는다(ruling 2) — draft 를 만든 뒤 답글을 고쳐도
+    여전히 우리 draft 다. body 비교는 `_publish`가 발행 시점에 `local.reply`
+    를 비울지 정하는 데만 쓴다. `discussion_id`가 없는 draft(UI 에서 새로
+    시작한 미완성 리뷰)는 항상 foreign 이다.
+    """
+    return draft.get("discussion_id") in {t.id for t in review.threads}
+
+
+def _create_drafts(
+    root, review: model.Review, sheet: push.Plan, drafts: list[dict], *, json_mode: bool
+) -> tuple[int, list[dict]]:
     """답글과 resolve 를 draft 하나로 묶는다. resolve 는 `resolve_discussion`
     에 실어 보내고 별도 `PUT discussions` 는 보내지 않는다(MUST NOT).
+
+    만든 개수를 돌려준다 — `pushed.replies`에는 넣지 않는다(결정 0012, ruling
+    4). draft 생성은 전송이 아니므로 이 수는 사람이 읽는 줄에만 쓴다.
     """
     existing = {(d.get("discussion_id"), (d.get("note") or "").strip()) for d in drafts}
     by_id = {t.id: t for t in review.threads}
     failures: list[dict] = []
+    created = 0
     for decision in sheet.targets():
         if not decision.reply and not decision.resolve:
             continue
@@ -265,17 +298,24 @@ def _create_drafts(root, review: model.Review, sheet: push.Plan, drafts: list[di
             # 있으므로 로컬에서 지우면 잃는다. 과거 실패가 남아 있었다면
             # 이번 성공으로 비운다(§9 가 모든 작업에 요구하는 일반 규칙).
             thread.local.push_error = None
-            print(f"draft {thread.id[:8]}{' (+resolve)' if decision.resolve else ''}")
+            created += 1
+            if not json_mode:
+                # `--json` 에서는 stdout 이 `_report` 의 JSON 객체 하나여야
+                # 한다(cli.md §2) — 사람용 줄은 그 모드에서 찍지 않는다.
+                print(f"draft {thread.id[:8]}{' (+resolve)' if decision.resolve else ''}")
         # 스레드 하나가 끝날 때마다 json 을 flush 한다(MUST, §9 4c 와 같다).
         store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
-    return failures
+    if created == 0 and not failures and not json_mode:
+        print("만들 draft 가 없습니다.")
+    return created, failures
 
 
-def _publish(root, review: model.Review, drafts: list[dict], *, force: bool) -> list[dict]:
+def _publish(
+    root, review: model.Review, drafts: list[dict], *, force: bool, json_mode: bool
+) -> tuple[dict[str, int], list[dict]]:
     """`bulk_publish` 는 내 pending draft **전부**를 발행한다 (선택적 발행이 없다)."""
-    bodies = {(t.id, t.local.reply.strip()): t for t in review.threads if t.local.reply.strip()}
-    mine = [d for d in drafts if (d.get("discussion_id"), (d.get("note") or "").strip()) in bodies]
-    foreign = [d for d in drafts if d not in mine]
+    ours = [d for d in drafts if _ours(review, d)]
+    foreign = [d for d in drafts if not _ours(review, d)]
     if foreign:
         prompt.confirm(
             f"mrq 가 만들지 않은 draft 가 {len(foreign)}건 있습니다. "
@@ -283,16 +323,26 @@ def _publish(root, review: model.Review, drafts: list[dict], *, force: bool) -> 
             force=force,
         )
     if not drafts:
-        print("발행할 draft 가 없습니다.")
-        return []
+        if not json_mode:
+            print("발행할 draft 가 없습니다.")
+        return {"replies": 0, "resolves": 0}, []
 
     try:
         transport.bulk_publish(review.iid)
     except GlabError as exc:
-        thread = review.threads[0]
-        failure = _record_failure(thread, "publish", exc)
+        # 발행은 MR 전체 단위다(선택적 발행이 없다) — 실패를 스레드 하나에
+        # 떠넘기지 않고, 이번에 발행하려던 내 draft 전부에 기록한다(ruling 3).
+        # 발행되지 않았으니 replies/resolves 는 0 이다.
+        failures = [
+            _record_failure(
+                next(t for t in review.threads if t.id == draft.get("discussion_id")),
+                "publish",
+                exc,
+            )
+            for draft in ours
+        ]
         store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
-        return [failure]
+        return {"replies": 0, "resolves": 0}, failures
 
     # 발행된 본문의 해시를 기록하고, **현재 값이 그 본문과 같을 때만** 비운다
     # (결정 0012) — draft 를 만든 뒤 md 에서 고친 답글을 지우면 그 수정이
@@ -309,8 +359,15 @@ def _publish(root, review: model.Review, drafts: list[dict], *, force: bool) -> 
         thread.local.touched_by = "push"
         thread.local.touched_at = surface.now()
     store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
-    print(f"published: draft {len(drafts)}건")
-    return []
+    if not json_mode:
+        print(f"published: draft {len(drafts)}건")
+    # `pushed.replies`/`resolves`는 발행된 "우리" draft 수만 센다(ruling 4) —
+    # bulk_publish 가 함께 내보낸 foreign draft 는 우리가 보낸 것이 아니다.
+    pushed = {
+        "replies": len(ours),
+        "resolves": sum(1 for d in ours if d.get("resolve_discussion")),
+    }
+    return pushed, []
 
 
 def _repull(iid: int, *, json_mode: bool) -> None:
@@ -341,24 +398,37 @@ def _repull(iid: int, *, json_mode: bool) -> None:
         )
 
 
-def _report(sheet: push.Plan, failures: list[dict], *, json_mode: bool) -> int:
-    sent_replies = sheet.replies - sum(1 for f in failures if f["op"] == "reply")
-    sent_resolves = sheet.resolves - sum(1 for f in failures if f["op"] == "resolve")
+def _report(
+    sheet: push.Plan,
+    failures: list[dict],
+    *,
+    json_mode: bool,
+    pushed: dict[str, int] | None = None,
+) -> int:
+    # `pushed`가 주어지면 `--draft`/`--publish` 경로다 — 그 경로는 실제로 나간
+    # 것만 세어 이미 넘겨준다(ruling 4). `None`이면 일반 경로이고, 여기서
+    # `sheet`(계획)와 실패를 대조해 센다.
+    bundled = pushed is not None
+    if not bundled:
+        sent_replies = sheet.replies - sum(1 for f in failures if f["op"] == "reply")
+        sent_resolves = sheet.resolves - sum(1 for f in failures if f["op"] == "resolve")
+        pushed = {"replies": sent_replies, "resolves": sent_resolves}
     if json_mode:
         json.dump(
-            {
-                "pushed": {"replies": sent_replies, "resolves": sent_resolves},
-                "failures": failures,
-            },
+            {"pushed": pushed, "failures": failures},
             sys.stdout,
             ensure_ascii=False,
         )
         sys.stdout.write("\n")
     else:
-        if not sheet.decisions:
-            print("보낼 것이 없습니다.")
-        else:
-            print(f"pushed: 답글 {sent_replies}건 · resolve {sent_resolves}건")
+        if not bundled:
+            if not sheet.decisions:
+                print("보낼 것이 없습니다.")
+            else:
+                print(f"pushed: 답글 {pushed['replies']}건 · resolve {pushed['resolves']}건")
+        # bundled 모드는 `_create_drafts`/`_publish`가 이미 사람이 읽는 줄을
+        # 찍었다 — 여기서 "pushed: 답글 N건"을 또 찍으면 draft 생성에도
+        # "답글이 갔다"는 말이 섞인다(ruling 4).
         for failure in failures:
             retry = "재실행하면 다시 시도합니다" if failure["retryable"] else "재시도하지 않습니다"
             print(
