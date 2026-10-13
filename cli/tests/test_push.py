@@ -1,4 +1,10 @@
-from mrq import discussions, model, push
+import json
+from pathlib import Path
+
+import pytest
+
+from mrq import discussions, model, push, store, surface
+from mrq.__main__ import main
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
 
@@ -397,3 +403,342 @@ def test_plan_warns_about_recorded_push_error_and_todo_reply():
 
     assert {"thread": "b2c3d4e5f6a1", "reason": "push-failed"} in sheet.warnings
     assert {"thread": "f6a1b2c3d4e5", "reason": "todo-with-reply"} in sheet.warnings
+
+
+MR = {
+    "iid": 1234,
+    "title": "Add retry logic to API client",
+    "web_url": "https://gitlab.example.com/g/p/-/merge_requests/1234",
+    "state": "opened",
+    "source_branch": "feat/retry",
+}
+FIXTURES = Path(__file__).parent / "fixtures"
+NOTES = "POST projects/:fullpath/merge_requests/1234/discussions/{did}/notes"
+RESOLVE = "PUT projects/:fullpath/merge_requests/1234/discussions/{did}"
+
+
+@pytest.fixture
+def pushable(git_repo, commit, checkout, glab, monkeypatch):
+    """pull 이 끝난 상태 + 전송 라우트. 샘플 json 을 그대로 디스크에 둔다."""
+    commit({"src/api/client.py": "def fetch(url):\n    resp = session.get(url)\n"})
+    checkout("feat/retry")
+    monkeypatch.chdir(git_repo)
+
+    review = _review()
+    for thread in review.threads:
+        # 샘플에는 미전송 답글이 섞여 있다. 테스트가 "무엇이 전송되는가" 를
+        # 정확히 단언할 수 있도록 비운 뒤 각 테스트가 `set_local` 로 채운다.
+        thread.local.state = "todo"
+        thread.local.reply = ""
+    with store.review_lock(git_repo, review.iid):
+        surface.write(git_repo, review, include_resolved=True)
+    store.write_current(git_repo, review.iid)
+
+    # 재pull 과 스냅샷이 쓰는 읽기 라우트.
+    glab.route("GET projects/:fullpath/merge_requests/1234", MR)
+    glab.route(
+        "GET projects/:fullpath",
+        {
+            "path_with_namespace": "group/sub/project",
+            "permissions": {"project_access": {"access_level": 40}, "group_access": None},
+        },
+    )
+    glab.route("GET user", {"id": 7, "username": "bongya"})
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/versions",
+        [
+            {
+                "head_commit_sha": "abc1234",
+                "base_commit_sha": "abc1234",
+                "start_commit_sha": "abc1234",
+            }
+        ],
+    )
+    glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=[_snapshot_ndjson()],
+    )
+    return git_repo
+
+
+def _snapshot_ndjson(
+    *,
+    bodies: dict[str, list[str]] | None = None,
+    resolved: set[str] | None = None,
+) -> str:
+    """샘플 review.json 의 스레드를 GitLab discussions 응답 모양으로 되돌린다.
+
+    스냅샷 비교(updated_at/note_count)가 성립해야 하므로 값을 샘플에서 그대로
+    가져온다. `bodies` 로 특정 스레드에 2차 방어용 "이미 보낸 note" 를 둘 수
+    있다 — 그 스레드는 **원본 노트를 대체한다**(추가하지 않는다). 추가하면
+    `note_count` 가 샘플의 `server.note_count` 와 달라져 `push.plan` 이
+    `server-changed` 로 먼저 건너뛰어 버리고 2차 방어(`_already_posted`)에
+    닿지 못한다 — `discussions.to_threads` 가 실제로 세는 값(필터 후 notes 의
+    길이)과 이 헬퍼가 만드는 값을 맞추기 위한 수정이다.
+
+    `resolved` 로 특정 스레드를 "서버에서 이미 resolve 됐다" 로 강제할 수 있다
+    — 실제 GitLab 은 resolve PUT 이 성공한 뒤의 조회에서 `resolved: true` 를
+    돌려주지만, 샘플은 항상 고정값(`false`)이다. 연속 두 번의 `push` 가 같은
+    스레드를 다루는 테스트(중복 resolve 방지)에서 "성공 전/후" 스냅샷을
+    구분하는 데 쓴다.
+    """
+    out = []
+    for thread in _review().threads:
+        is_resolved = thread.id in (resolved or set()) or thread.server.resolved
+        extra = (bodies or {}).get(thread.id)
+        if extra:
+            notes = [
+                {
+                    "id": 9000 + i,
+                    "author": {"username": "bongya"},
+                    "created_at": thread.server.updated_at,
+                    "updated_at": thread.server.updated_at,
+                    "body": body,
+                    "resolvable": thread.server.resolvable,
+                    "resolved": is_resolved,
+                    "position": None,
+                }
+                for i, body in enumerate(extra)
+            ]
+        else:
+            notes = [
+                {
+                    "id": thread.notes[0].id,
+                    "author": {"username": thread.notes[0].author},
+                    "created_at": thread.notes[0].created_at,
+                    "updated_at": thread.server.updated_at,
+                    "body": thread.notes[0].body,
+                    "resolvable": thread.server.resolvable,
+                    "resolved": is_resolved,
+                    "position": None,
+                }
+            ]
+        out.append(
+            json.dumps(
+                {
+                    "id": thread.id,
+                    "individual_note": not thread.server.repliable,
+                    "notes": notes,
+                },
+                ensure_ascii=False,
+            )
+        )
+    return "\n".join(out) + "\n"
+
+
+def _set_local(root: Path, thread_id: str, *, state: str, reply: str) -> None:
+    path = store.review_json_path(root, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    target = next(t for t in review.threads if t.id == thread_id)
+    target.local.state = state
+    target.local.reply = reply
+    store.atomic_write_text(path, model.dumps(review))
+
+
+def _read(root: Path) -> model.Review:
+    return model.loads(store.review_json_path(root, 1234).read_text(encoding="utf-8"))
+
+
+def test_push_posts_reply_and_resolves(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
+
+    assert main(["push"]) == 0
+
+    # `"notes" in path` 는 `draft_notes`(repull 이 `pull` 의 일부로 조회하는
+    # 가용성 체크) 까지 걸려든다 — `/notes` 로 끝나는 것만 골라야 답글 POST
+    # 만 남는다.
+    posted = [c for c in glab.calls() if c["argv"][1].endswith("/notes")]
+    assert len(posted) == 1
+    assert posted[0]["stdin"] == "확인했습니다"
+    review = _read(pushable)
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    # 전송 성공 시 reply 를 비운다(MUST) — 비우지 않으면 재pull 후 md 에 같은
+    # 답글이 인용과 reply 양쪽에 두 번 보인다.
+    assert target.local.reply == ""
+    assert target.local.pushed_hash == push.body_hash("확인했습니다")
+    assert target.local.push_error is None
+    assert target.local.touched_by == "push"
+
+
+def test_push_sends_fenced_body_byte_for_byte(pushable, glab):
+    # Review Focus 3. 코드 펜스·표·CRLF 가 섞인 답글이 그대로 가야 한다.
+    body = (
+        "다음과 같이 고쳤습니다\n\n```python\nif x:\n    pass\n```\n\n"
+        "| 전 | 후 |\n|---|---|\n| 1 | 2 |"
+    )
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply=body)
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+
+    assert main(["push"]) == 0
+
+    posted = [c for c in glab.calls() if c["argv"][1].endswith("/notes")][-1]
+    assert posted["stdin"] == body
+
+
+def test_push_twice_sends_nothing_the_second_time(pushable, glab):
+    # Review Focus 4 + PRD 의 "중복 전송 0건".
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
+    # 실제 GitLab 은 resolve PUT 이 성공한 뒤의 조회에서 resolved:true 를
+    # 돌려준다. `pushable` 의 고정 스냅샷 하나로는 그 변화를 표현할 수 없으므로
+    # (resolve 가 성공하기 전/후를 구분해야 한다) 이 테스트에서만 순서를 바꿔
+    # 등록한다 — 1 번째 조회(이번 push 의 사전 판정)는 미해결, 그 뒤로는 해결됨.
+    glab.route_seq(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        [
+            {"pages": [_snapshot_ndjson()]},
+            {"pages": [_snapshot_ndjson(resolved={"a1b2c3d4e5f6"})]},
+        ],
+    )
+    assert main(["push"]) == 0
+
+    assert main(["push"]) == 0
+
+    writes = [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+    # 첫 push 의 POST 1 + PUT 1 이 전부여야 한다.
+    assert len(writes) == 2, "두 번째 push 가 쓰기 요청을 다시 보냈다"
+
+
+def test_push_flushes_json_after_each_thread(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="첫 번째")
+    _set_local(pushable, "b2c3d4e5f6a1", state="replied", reply="두 번째")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(NOTES.format(did="b2c3d4e5f6a1"), {"id": 9002}, status=201)
+    # 호출 순서는 1 = discussions GET(스냅샷), 2 = 첫 POST, 3 = 두 번째 POST 다.
+    # 가짜 glab 은 **로그에 기록한 뒤** 죽으므로 "요청은 갔는데 그 뒤에 실패"
+    # 라는 모양이 된다 (testing.md §2).
+    glab.fail_at(3)
+
+    assert main(["push"]) == 4
+
+    review = _read(pushable)
+    first = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    second = next(t for t in review.threads if t.id == "b2c3d4e5f6a1")
+    assert first.local.pushed_hash == push.body_hash("첫 번째")
+    assert first.local.reply == ""
+    # 죽은 쪽은 답글이 그대로 남아 재실행으로 복구된다.
+    assert second.local.reply == "두 번째"
+
+
+def test_push_records_second_defence_hash_without_posting(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="이미 올라갔다")
+    glab.route(
+        "GET projects/:fullpath/merge_requests/1234/discussions",
+        pages=[_snapshot_ndjson(bodies={"a1b2c3d4e5f6": ["이미 올라갔다\n"]})],
+    )
+
+    assert main(["push"]) == 0
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+    target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.pushed_hash == push.body_hash("이미 올라갔다")
+    assert target.local.reply == ""
+
+
+def test_push_demotes_state_and_records_error_on_resolve_403(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(
+        RESOLVE.format(did="a1b2c3d4e5f6"),
+        raw='{"message":"403 Forbidden"}',
+        status=403,
+    )
+
+    assert main(["push"]) == 4
+
+    target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.state == "replied"
+    assert target.local.push_error["op"] == "resolve"
+    assert target.local.push_error["status"] == 403
+    assert target.local.push_error["reason"] == "forbidden"
+    assert target.local.push_error["retryable"] is False
+    # 답글은 성공했으므로 비워져 있고 다시 보내지 않는다.
+    assert target.local.reply == ""
+
+
+def test_push_does_not_retry_resolve_after_demotion(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
+    glab.route(
+        RESOLVE.format(did="a1b2c3d4e5f6"),
+        raw='{"message":"403 Forbidden"}',
+        status=403,
+    )
+    assert main(["push"]) == 4
+
+    assert main(["push"]) == 0
+
+    puts = [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "PUT"
+    ]
+    assert len(puts) == 1, "강등된 뒤에도 resolve 를 재시도했다 — 루프가 열려 있다"
+
+
+def test_push_keeps_reply_when_post_fails(pushable, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="보내야 한다")
+    glab.route(
+        NOTES.format(did="a1b2c3d4e5f6"),
+        raw='{"message":"502 Bad Gateway"}',
+        status=502,
+    )
+
+    assert main(["push"]) == 4
+
+    target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.reply == "보내야 한다"
+    assert target.local.pushed_hash is None
+    assert target.local.push_error["op"] == "reply"
+    assert target.local.push_error["retryable"] is True
+
+
+def test_push_refuses_on_a_different_branch(pushable, checkout, glab):
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="보내야 한다")
+    checkout("other/branch")
+
+    assert main(["push"]) == 1
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_push_stops_on_sync_conflict_without_sending(pushable, glab):
+    # md 와 CLI 가 같은 스레드를 다르게 고친 상태를 만든다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="json 쪽")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.touched_by = "cli"
+    target.local.touched_at = surface.now()
+    store.atomic_write_text(path, model.dumps(review))
+    md_path = store.review_md_path(pushable, 1234)
+    text = md_path.read_text(encoding="utf-8")
+    marker = text.index("### reply", text.index("<!-- mrq:a1b2c3d4e5f6"))
+    md_path.write_text(
+        text[: marker + len("### reply")] + "\n\nmd 쪽\n" + text[marker + len("### reply") :],
+        encoding="utf-8",
+    )
+
+    assert main(["push"]) == 3
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]

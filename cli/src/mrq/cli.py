@@ -58,6 +58,18 @@ def build_parser() -> argparse.ArgumentParser:
     state.add_argument("thread")
     state.add_argument("state", choices=["todo", "done", "replied", "skipped"])
 
+    push = sub.add_parser("push", help="답글과 resolve 를 GitLab 에 전송한다")
+    push.add_argument("--json", action="store_true")
+    push.add_argument("--dry-run", action="store_true", help="보낼 것만 보여준다")
+    push.add_argument(
+        "--force",
+        action="store_true",
+        help="서버에서 변경된 스레드도 보내고, MR 이 열려 있지 않아도 진행한다",
+    )
+    push.add_argument("--draft", action="store_true", help="draft 로 묶어 둔다 (발행은 --publish)")
+    push.add_argument("--publish", action="store_true", help="draft 를 일괄 발행한다")
+    push.add_argument("--resolve", choices=["auto", "skip", "require"], default="auto")
+
     return parser
 
 
@@ -68,6 +80,7 @@ def dispatch(argv: list[str]) -> int:
 
     from mrq.commands import listing as listing_command
     from mrq.commands import pull as pull_command
+    from mrq.commands import push as push_command
     from mrq.commands import reanchor as reanchor_command
     from mrq.commands import reply as reply_command
     from mrq.commands import state as state_command
@@ -82,5 +95,6 @@ def dispatch(argv: list[str]) -> int:
         "list": listing_command.run,
         "reply": reply_command.run,
         "state": state_command.run,
+        "push": push_command.run,
     }
     return handlers[args.command](args)
