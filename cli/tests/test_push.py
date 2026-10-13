@@ -822,6 +822,7 @@ def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsy
     # 비대화형이므로 묻지 않고 거부한다 — AI 가 부르는 경로에서 input() 이
     # 블로킹되면 세션이 멈춘다.
     monkeypatch.setattr("sys.stdin.isatty", lambda: False)
+    md_before = store.review_md_path(pushable, 1234).read_text(encoding="utf-8")
 
     assert main(["push"]) == 1
     assert not [
@@ -829,6 +830,11 @@ def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsy
         for c in glab.calls()
         if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] == "POST"
     ]
+    # Minor 6 — mr_state 확인은 락(과 그 안의 sync) 보다 **먼저** 받아야 한다.
+    # 그래야 거부됐을 때 sync 가 전혀 돌지 않는다 — md 가 한 바이트도 바뀌지
+    # 않아야 한다. 확인이 락 안(sync 뒤)에 있었다면 거부해도 이미 sync 가
+    # md 를 다시 그린 뒤였다.
+    assert store.review_md_path(pushable, 1234).read_text(encoding="utf-8") == md_before
 
     assert main(["push", "--force"]) == 0
 

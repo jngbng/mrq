@@ -504,6 +504,56 @@ def test_dry_run_draft_json_marks_mode(pushable, glab, capsys):  # noqa: F811
     assert payload["mode"] == "draft"
 
 
+def test_dry_run_draft_publish_previews_foreign_confirmation(pushable, glab, capsys):  # noqa: F811
+    # Minor 10 — `--dry-run --draft --publish`는 묶어 보내고 즉시 발행하는
+    # 조합이라 foreign draft 확인이 가장 중요한 자리인데, 그동안 미리보기가
+    # 그 확인을 전혀 보여주지 않았다. `GET draft_notes`를 조회만 해서(쓰지
+    # 않는다) 발행 시 함께 공개될 foreign 수를 보여줘야 한다.
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(
+        f"GET {DRAFTS}",
+        [
+            {
+                "id": 7,
+                "discussion_id": None,
+                "note": "UI 에서 쓰던 미완성 리뷰",
+                "resolve_discussion": False,
+            }
+        ],
+    )
+
+    assert main(["push", "--dry-run", "--draft", "--publish"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a1b2c3d4" in out
+    assert "mrq 가 만들지 않은 draft 1건" in out
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_dry_run_draft_publish_json_reports_foreign_count(pushable, glab, capsys):  # noqa: F811
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(
+        f"GET {DRAFTS}",
+        [
+            {
+                "id": 7,
+                "discussion_id": None,
+                "note": "UI 에서 쓰던 미완성 리뷰",
+                "resolve_discussion": False,
+            }
+        ],
+    )
+
+    assert main(["push", "--dry-run", "--draft", "--publish", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["publish_foreign"] == 1
+
+
 def test_dry_run_publish_lists_pending_drafts(pushable, glab, capsys):  # noqa: F811
     # ruling — publish_only 의 sheet 는 snapshot 없이 만들어져 server-changed
     # 를 보여줄 수 없다. --dry-run --publish 는 그 sheet 대신 실제 발행 대상인

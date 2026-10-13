@@ -45,10 +45,37 @@ def run(args) -> int:
     # 발행하지 못하게 막으면 안 된다.
     publish_only = args.publish and not args.draft
 
+    # MR 상태·foreign draft 확인은 sync 가 건드리지 않는 자원이므로 락 전에
+    # 받는다(Minor 6, `clean`과 같은 자리) — `prompt.confirm`의 `input()`이
+    # 락을 쥔 채 블로킹되면 그 사이 에디터의 `sync`가 락을 기다리며 멈춘다.
+    # `--dry-run`은 미리보기일 뿐 전송하지 않으므로 확인을 요구하지 않는다
+    # (§9 dry-run 은 mr_state 검사보다 먼저다).
+    if not args.dry_run:
+        pre_state = model.loads(path.read_text(encoding="utf-8"))
+        if pre_state.mr_state != "opened":
+            prompt.confirm(
+                f"MR 이 {pre_state.mr_state} 상태입니다. 보통은 브랜치를 바꾼 뒤 "
+                "`.mrq/current` 가 낡은 것을 가리키고 있다는 신호입니다.",
+                force=args.force,
+            )
+        if args.publish:
+            foreign = len(_foreign_drafts(pre_state))
+            if foreign:
+                prompt.confirm(
+                    f"mrq 가 만들지 않은 draft 가 {foreign}건 있습니다. "
+                    "bulk_publish 는 내 draft 전부를 발행하므로 그것들도 함께 "
+                    "공개됩니다.",
+                    force=args.force,
+                )
+
     with store.review_lock(root, iid):
         if publish_only:
             review = model.loads(path.read_text(encoding="utf-8"))
-            sheet = push.plan(review, resolve=args.resolve, force=args.force)
+            # `sheet`: 발행 전용 경로는 draft 목록 조회로 대상을 정하므로(§9)
+            # 판정이 필요 없다 — `_run_draft`/`_report`와 시그니처를 맞추기
+            # 위한 자리표시자다(Minor 9). `push.plan`을 불러도 결과는 쓰이지
+            # 않는다 — 안 부르는 쪽이 맞다.
+            sheet = push.Plan()
         else:
             outcome = mdsync.perform(root, iid, path)
             if outcome.errors:
@@ -66,13 +93,10 @@ def run(args) -> int:
         if args.dry_run:
             if publish_only:
                 return _report_dry_run_publish(review, json_mode=args.json)
-            return _report_dry_run(review, sheet, json_mode=args.json, draft_mode=args.draft)
-        if review.mr_state != "opened":
-            prompt.confirm(
-                f"MR 이 {review.mr_state} 상태입니다. 보통은 브랜치를 바꾼 뒤 "
-                "`.mrq/current` 가 낡은 것을 가리키고 있다는 신호입니다.",
-                force=args.force,
+            return _report_dry_run(
+                review, sheet, json_mode=args.json, draft_mode=args.draft, publish=args.publish
             )
+        # mr_state·foreign draft 확인은 락 전에 이미 받았다(Minor 6, 위 참고).
         draft_mode = bool(args.draft or args.publish)
         if draft_mode:
             failures, pushed = _run_draft(root, review, sheet, args, json_mode=args.json)
@@ -93,14 +117,26 @@ _SKIP_TEXT = {reason: reason for reason in push.SKIP_REASONS}
 
 
 def _report_dry_run(
-    review: model.Review, sheet: push.Plan, *, json_mode: bool, draft_mode: bool = False
+    review: model.Review,
+    sheet: push.Plan,
+    *,
+    json_mode: bool,
+    draft_mode: bool = False,
+    publish: bool = False,
 ) -> int:
     """`--dry-run`. `draft_mode`(=`--draft`)면 각 행을 draft 로 묶일 것으로
     표시한다 — 그대로 두면 "보냈다" 로 읽혀 draft 는 전송이 아니라는 결정
     0012 와 어긋난다. `--publish` 단독의 미리보기는 `_report_dry_run_publish`
     가 따로 맡는다(그 경로는 `sheet` 가 스냅샷 없이 만들어져 이 함수가 보여줄
     수 있는 것과 의미가 다르다).
+
+    `publish`(=`--draft --publish`, Minor 10)는 이 함수에만 해당한다 —
+    `--publish` 단독은 `publish_only`라 위 다른 함수로 간다. 가장 먼저 섞인
+    두 플래그(`--draft --publish`)인데도 `_publish`가 발행 직전에 요구하는
+    "mrq 가 만들지 않은 draft N건" 확인을 미리보기가 보여주지 않았다 — 조회만
+    하고(쓰지 않는다, `--dry-run`이다) 그 수를 덧붙인다.
     """
+    foreign = len(_foreign_drafts(review)) if publish else None
     if json_mode:
         payload = {
             "iid": review.iid,
@@ -123,6 +159,8 @@ def _report_dry_run(
         }
         if draft_mode:
             payload["mode"] = "draft"
+        if foreign is not None:
+            payload["publish_foreign"] = foreign
         json.dump(payload, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         return 0
@@ -157,7 +195,21 @@ def _report_dry_run(
         print(f"{decision.thread[:8]}  {label:<24}  {where}")
     if not sheet.decisions:
         print("만들 draft 가 없습니다." if draft_mode else "보낼 것이 없습니다.")
+    if foreign:
+        # `_publish`가 발행 직전에 요구할 확인을 미리 보여준다(Minor 10) —
+        # `--draft --publish`는 묶어 보내고 즉시 발행하는 조합이라 미리보기가
+        # 가장 중요한 자리인데, 그동안 이 줄이 없었다.
+        print(f"mrq 가 만들지 않은 draft {foreign}건이 함께 발행됩니다.")
     return 0
+
+
+def _foreign_drafts(review: model.Review) -> list[dict]:
+    """`review`의 어느 스레드와도 `discussion_id`가 일치하지 않는 draft.
+
+    `--publish` 확인(락 전 미리보기와 `_publish`의 최종 판정 양쪽)이 쓴다.
+    조회만 한다 — 쓰지 않는다.
+    """
+    return [d for d in transport.list_drafts(review.iid) if not _ours(review, d)]
 
 
 def _report_dry_run_publish(review: model.Review, *, json_mode: bool) -> int:
@@ -334,9 +386,7 @@ def _run_draft(
             # 방금 만든 draft 는 위 조회 결과에 없다 — 발행 뒤 pushed_hash
             # 기록·reply 정리가 그 스레드만 건너뛰지 않도록 다시 조회한다.
             drafts = transport.list_drafts(review.iid)
-        published, publish_failures = _publish(
-            root, review, drafts, force=args.force, json_mode=json_mode
-        )
+        published, publish_failures = _publish(root, review, drafts, json_mode=json_mode)
         failures += publish_failures
         pushed = published
     return failures, pushed
@@ -458,17 +508,16 @@ def _create_drafts(
 
 
 def _publish(
-    root, review: model.Review, drafts: list[dict], *, force: bool, json_mode: bool
+    root, review: model.Review, drafts: list[dict], *, json_mode: bool
 ) -> tuple[dict[str, int], list[dict]]:
-    """`bulk_publish` 는 내 pending draft **전부**를 발행한다 (선택적 발행이 없다)."""
+    """`bulk_publish` 는 내 pending draft **전부**를 발행한다 (선택적 발행이 없다).
+
+    foreign draft 확인은 더 이상 여기서 하지 않는다(Minor 6) — 호출자
+    (`run`)가 락을 잡기 **전에** 이미 확인을 받았다. 여기서 또 확인하면
+    대화형 세션에서 같은 질문을 두 번 받는다.
+    """
     ours = [d for d in drafts if _ours(review, d)]
     foreign = [d for d in drafts if not _ours(review, d)]
-    if foreign:
-        prompt.confirm(
-            f"mrq 가 만들지 않은 draft 가 {len(foreign)}건 있습니다. "
-            "bulk_publish 는 내 draft 전부를 발행하므로 그것들도 함께 공개됩니다.",
-            force=force,
-        )
     if not drafts:
         if not json_mode:
             print("발행할 draft 가 없습니다.")

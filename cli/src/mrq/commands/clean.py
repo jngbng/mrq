@@ -77,9 +77,7 @@ def run(args) -> int:
                 try:
                     shutil.rmtree(store.review_dir(root, iid))
                 except OSError as exc:
-                    print(
-                        f"⚠ !{iid} 를 제거하지 못했습니다 ({exc}) — 건너뜁니다.", file=sys.stderr
-                    )
+                    print(f"⚠ !{iid} 를 제거하지 못했습니다 ({exc}) — 건너뜁니다.", file=sys.stderr)
                     continue
         except UsageError as exc:
             print(f"⚠ !{iid} 의 락을 얻지 못해 건너뜁니다 ({exc}).", file=sys.stderr)
