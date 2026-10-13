@@ -338,8 +338,8 @@ def test_sync_json_success_payload(synced, capsys):
     assert payload["iid"] == 1234
     assert payload["applied"][0]["state"] == "done"
     # 이 픽스처의 git 저장소 내용(`x\n`/`y\n`)은 샘플의 anchor/hunk 와 무관하므로
-    # 위치가 있던 5개 스레드(`(general)` 제외)는 모두 stale 로 재앵커링된다.
-    assert payload["anchors"] == {"exact": 0, "fuzzy": 0, "stale": 5}
+    # 위치가 있던 6개 스레드(`(general)` 제외)는 모두 stale 로 재앵커링된다.
+    assert payload["anchors"] == {"exact": 0, "fuzzy": 0, "stale": 6}
     assert isinstance(payload["warnings"], list)
 
 

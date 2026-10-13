@@ -29,17 +29,17 @@ def ready(git_repo, commit, checkout, monkeypatch):
 def test_payload_counts_threads_and_local_states():
     payload = report.status_payload(_review())
     assert payload["iid"] == 1234
-    assert payload["threads"]["total"] == 6
+    assert payload["threads"]["total"] == 7
     assert payload["threads"]["resolved_on_server"] == 2
-    assert payload["threads"]["unresolved"] == 4
-    assert sum(payload["local"].values()) == 6
+    assert payload["threads"]["unresolved"] == 5
+    assert sum(payload["local"].values()) == 7
     assert set(payload["local"]) == {"todo", "done", "replied", "skipped"}
 
 
 def test_payload_excludes_null_location_from_anchor_stats():
     payload = report.status_payload(_review())
     # 스레드 6개 중 location 이 null 인 general 하나는 통계에서 빠진다 (§4.9 MUST).
-    assert sum(payload["anchors"].values()) == 5
+    assert sum(payload["anchors"].values()) == 6
 
 
 def test_payload_counts_pending_reply_and_resolve():

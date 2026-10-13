@@ -8,7 +8,7 @@
 
 # !1234 Add retry logic to API client
 
-head abc1234 · pulled 09:12 · unresolved 4 · exact 3 fuzzy 1 stale 1
+head abc1234 · pulled 09:12 · unresolved 5 · exact 4 fuzzy 1 stale 1
 
 <!-- mrq:7a0b1c2d3e4f v:735c74 -->
 ## [ ] (general) — @kim  `no-reply`
@@ -73,6 +73,25 @@ head abc1234 · pulled 09:12 · unresolved 4 · exact 3 fuzzy 1 stale 1
 ---
 
 그래서 그대로 둡니다.
+
+<!-- mrq:f6a1b2c3d4e5 v:735c74 -->
+## [ ] src/api/retry.py:14 — @jdoe
+
+```diff
+@@ -11,4 +11,9 @@ def with_retry(fn, retries=3):
+     last = None
++    for attempt in range(retries):
++        try:
++            return fn()
++        except TransientError as exc:
++            last = exc
+```
+
+> **@jdoe** 2026-10-05 16:10
+> 이 루프 전체를 `retry.should_retry` 를 쓰는 형태로 바꿔 주세요.
+
+### reply
+
 
 <!-- mrq:b2c3d4e5f6a1 v:735c74 -->
 ## [ ] src/api/session.py:42 — @park  `fuzzy`

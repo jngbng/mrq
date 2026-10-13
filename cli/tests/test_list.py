@@ -9,7 +9,7 @@ def test_list_json_emits_threads_verbatim(ready, capsys):  # noqa: F811
     payload = json.loads(capsys.readouterr().out)
     assert payload["iid"] == 1234
     assert payload["schema_version"] == 1
-    assert len(payload["threads"]) == 6
+    assert len(payload["threads"]) == 7
     # 필드를 가공하거나 줄이지 않는다(MUST) — 소비자가 스키마 하나만 알면 된다.
     assert set(payload["threads"][0]) == {
         "id",
@@ -53,7 +53,7 @@ def test_list_human_output_is_one_line_per_thread(ready, capsys):  # noqa: F811
     # 6 스레드 중 서버에서 resolve 된 둘(d4e5f6a1b2c3, e5f6a1b2c3d4) 중
     # 전송하지 않은 작업이 없는 e5f6a1b2c3d4 만 숨는다 — review-md.md §5 의
     # 예외로 d4e5f6a1b2c3 는 여전히 보인다. 그래서 5줄이다.
-    assert len(lines) == 5
+    assert len(lines) == 6
     assert lines[0].startswith("7a0b1c2d")  # location 없는 스레드가 먼저
     assert "@kim" in lines[0] or "@jdoe" in lines[0]
     ids = [line[:8] for line in lines]
