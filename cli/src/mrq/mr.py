@@ -60,7 +60,10 @@ def detect(root: Path, explicit_iid: int | None = None) -> MrInfo:
             if model.peek_source_branch(path.read_text(encoding="utf-8")) == branch:
                 return _fetch(cached)
 
-    found = glab.api(f"{PROJECT}/merge_requests?source_branch={branch}&state=opened&per_page=100")
+    found = glab.api(
+        f"{PROJECT}/merge_requests",
+        query={"source_branch": branch, "state": "opened", "per_page": "100"},
+    )
     if not found:
         raise MrDetectionError(
             f"브랜치 {branch} 에 열린 MR 이 없습니다. `--mr <iid>` 로 지정하세요."

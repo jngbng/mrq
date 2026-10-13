@@ -17,7 +17,7 @@ MR = {
     "state": "opened",
     "source_branch": "feat/retry",
 }
-SEARCH = "GET projects/:fullpath/merge_requests?source_branch=feat/retry&state=opened&per_page=100"
+SEARCH = "GET projects/:fullpath/merge_requests"
 
 
 @pytest.fixture

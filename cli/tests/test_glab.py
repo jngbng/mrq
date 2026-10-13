@@ -165,3 +165,39 @@ def test_non_json_error_body_does_not_crash(glab):
     with pytest.raises(GlabError) as excinfo:
         glab_mod.api("user")
     assert excinfo.value.status == 502
+
+
+def test_query_becomes_raw_field_flags_on_get(glab):
+    glab.route("GET merge_requests", [])
+    glab_mod.api("merge_requests", query={"state": "opened", "per_page": "100"})
+    argv = glab.calls()[0]["argv"]
+    assert "-f" in argv
+    assert "state=opened" in argv
+    assert "per_page=100" in argv
+    # 경로에는 쿼리가 섞이지 않는다 — glab 이 퍼센트 인코딩을 한다.
+    assert argv[1] == "merge_requests"
+
+
+def test_query_keeps_special_characters_out_of_the_path(glab):
+    # `#` 를 경로에 보간하면 프래그먼트로 잘려 그 뒤의 파라미터가 통째로
+    # 사라진다 (1.114 실측).
+    glab.route("GET merge_requests", [])
+    glab_mod.api("merge_requests", query={"source_branch": "feat/#123", "state": "opened"})
+    argv = glab.calls()[0]["argv"]
+    assert "source_branch=feat/#123" in argv
+    assert "state=opened" in argv
+
+
+def test_query_value_containing_equals_is_passed_whole(glab):
+    # glab 은 첫 `=` 에서만 쪼갠다. 값 안의 `=` 는 값의 일부다.
+    glab.route("GET search", [])
+    glab_mod.api("search", query={"q": "a=b", "empty": ""})
+    argv = glab.calls()[0]["argv"]
+    assert "q=a=b" in argv
+    assert "empty=" in argv
+
+
+def test_query_on_non_get_method_is_rejected(glab):
+    # GET/DELETE 가 아니면 -f 는 JSON 본문으로 간다. 조용히 틀린 요청이 된다.
+    with pytest.raises(ValueError):
+        glab_mod.api("notes", method="POST", query={"a": "b"})
