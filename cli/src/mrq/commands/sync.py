@@ -25,6 +25,9 @@ def run(args) -> int:
     if outcome.conflicts:
         return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
 
+    # 경고는 --json 여부와 무관하게 stderr 로도 보낸다(`cli.md` §2 MUST) —
+    # stdout 은 순수 JSON 이어야 하므로 --json 일 때도 페이로드에만 담으면
+    # 사람이 터미널에서 그냥 보는 경로가 없어진다.
     for warning in outcome.warnings:
         print(f"review.md:{warning.line}: {warning.message}", file=sys.stderr)
 

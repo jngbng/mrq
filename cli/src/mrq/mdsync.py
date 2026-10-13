@@ -38,6 +38,11 @@ def perform(
 
     에러·충돌이면 **아무것도 쓰지 않고** 그 사실만 담아 돌려준다. 보고와 종료
     코드는 호출자(`sync` 또는 `push`)의 몫이다.
+
+    `review.md` 부재 검사도 호출자의 락 **안에서** 실행된다 — 의도한 순서다.
+    `push` 가 이 함수 하나를 자기 락 안에서 부르는 것으로 끝나려면 이 사전
+    검사가 `perform` 바깥에 따로 있으면 안 된다 — 있으면 호출부마다 중복해야
+    한다. 락은 예외가 나도 `finally` 에서 풀리므로 안전하다.
     """
     md_path = store.review_md_path(root, iid)
     if not md_path.is_file():
@@ -69,6 +74,9 @@ def perform(
     if errors:
         return Outcome(errors=errors)
 
+    # 모호하거나 모르는 접두사는 여기서 exit 1 로 끝낸다 — plan_sync 에
+    # 닿기 전이므로 아직 아무것도 쓰지 않았다. 접두사 해석은 threads.py
+    # 하나로 모은다(`cli.md` §1 MUST) — conflict.py 는 완전한 id 만 받는다.
     only_ids = tuple(threads.resolve_ref(review, ref).id for ref in only_refs)
     applied, conflicts, extra = conflict.plan_sync(review, parsed, prefer=prefer, only=only_ids)
     if conflicts:
