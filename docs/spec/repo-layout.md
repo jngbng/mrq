@@ -80,11 +80,12 @@ mrq/
 | `reanchor.py` | 재앵커링 오케스트레이션 | `MR_HEAD_REFSPEC`, `Stats`, `ensure_commits`, `reanchor_all` |
 | `conflict.py` | 충돌 판정 (`data-model.md` §5.2). 사람(md)과 AI(CLI)가 같은 스레드를 다르게 고친 경우만 충돌. "렌더 후 json 변경"은 `v` 핑거프린트로 판정한다(`decisions/0008`) | `Applied`, `Conflict`, `md_values`, `classify`, `plan_sync` |
 | `threads.py` | 스레드 참조 해석과 `list` 필터 (`cli.md` §1, §7). 접두사가 여럿과 겹치면 exit 1 — 모호한 `--thread` 가 엉뚱한 스레드에 적용되는 것을 막는 유일한 지점 | `resolve_ref`, `filter_threads` |
-| `report.py` | `status` 집계 — push 블록이 전송 직전 검토면이다 (`cli.md` §8) | `status_payload` |
-| `commands/*.py` | 명령별 `run(args) -> int`. 하나의 명령이 하나의 파일 | `pull.run`, `reanchor.run`, `sync.run`, `status.run`, `listing.run` |
-
-`push`(계획 3)는 `commands/push.py`이며 `glab.py`의 확장을 요구한다 —
-`docs/plans/2026-10-12-cli-core-residuals.md`의 R3.
+| `report.py` | `status` 집계 — push 블록이 전송 직전 검토면이다 (`cli.md` §8). `push.plan`을 호출해 숫자를 만든다 — `status`와 `push`가 같은 판정 함수를 쓴다는 규칙(`cli.md` §8)이 여기 있다 | `status_payload` |
+| `push.py` | **순수 판정.** `plan(review, *, snapshot=…, resolve=, force=)` → `Plan`. 네트워크·파일을 만지지 않는다 (`cli.md` §8·§9) | `SKIP_REASONS`, `body_hash`, `Decision`, `Plan`, `plan` |
+| `transport.py` | **GitLab 에 쓰는 유일한 지점.** notes·resolve·draft·publish | `post_reply`, `resolve`, `list_drafts`, `create_draft`, `bulk_publish` |
+| `mdsync.py` | `sync` 의 핵심(파싱→충돌→반영→재앵커링→쓰기)과 에러·충돌 보고. `push` 가 자기 락 안에서 재사용한다 | `Outcome`, `perform`, `report_errors`, `report_conflicts` |
+| `prompt.py` | 되돌릴 수 없는 작업 앞의 확인. `push`와 `clean`이 같은 규칙을 쓴다 | `confirm` |
+| `commands/*.py` | 명령별 `run(args) -> int`. 하나의 명령이 하나의 파일 | `pull.run`, `reanchor.run`, `sync.run`, `status.run`, `listing.run`, `reply.run`, `state.run`, `push.run`, `doctor.run`, `clean.run`, `open.run` |
 
 ### `testdata/`를 분리하는 이유
 

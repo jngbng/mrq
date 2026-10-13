@@ -9,7 +9,7 @@ git 히스토리, 그리고 스펙에 남는다.
 | 1 | 0~3 | `mrq pull`이 정확한 `review.json`을 만든다 | **완료** (2026-10-12, 43 커밋) |
 | 2 | 4~8 | 렌더 → 편집 → `sync` → `status`. AI가 코멘트를 처리할 수 있다 | **완료** (2026-10-13, 17 커밋) |
 | — | — | **계획 3 전 과제** — 잔여 항목 R6·R7·R3·R4 | **완료** (2026-10-13) |
-| 3 | 9, 10, 12 | `push`까지 완결된 CLI | 다음 |
+| 3 | 9, 10, 12 | `push`까지 완결된 CLI | **완료** (2026-10-14, 26 커밋) |
 | 4 | 11 | `plugin_emacs` | |
 | 5 | 13 | `plugin_vscode` | |
 
@@ -31,10 +31,10 @@ git 히스토리, 그리고 스펙에 남는다.
 | 6 | 충돌 감지 + `--prefer` | FR-006 | 2 | 완료 |
 | 7 | `mrq status`, `mrq list` | FR-007 | 2 | 완료 |
 | 8 | `mrq reply`, `mrq state` | FR-012 | 2 | 완료 |
-| 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | 3 | |
-| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | 3 | |
+| 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | 3 | 완료 |
+| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | 3 | 완료 |
 | 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | 4 | |
-| 12 | `--draft` 모드 | FR-013 | 3 | |
+| 12 | `--draft` 모드 | FR-013 | 3 | 완료 |
 | 13 | VSCode 확장 | FR-015 | 5 | |
 
 1번이 가장 앞인 이유: 원자성을 뒤늦게 추가하면 모든 쓰기 경로를 다시 훑어야 하고,
@@ -92,32 +92,64 @@ R6·R7은 둘 다 **손으로 쓴 픽스처가 구현과 같은 틀린 가정을
 
 ---
 
-## 계획 3 — 전송 (9, 10, 12단계)
+## 계획 3 — 완료
 
-**결과물:** `push`까지 완결된 CLI. 답글과 resolve가 GitLab에 올라가고, 중간에
-죽어도 중복 없이 복구된다.
+9, 10, 12단계. `push`까지 완결된 CLI. 답글과 resolve가 GitLab에 올라가고, 중간에
+죽어도 중복 없이 복구된다. `--draft`/`--publish`로 리뷰 한 라운드를 묶어 보낼 수
+있다. 483개 테스트.
 
-| 단계 | 내용 | FR | 스펙 |
-|---|---|---|---|
-| 9 | `mrq push`(일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | `spec/cli.md` §9 |
-| 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | `spec/cli.md` §11~13 |
-| 12 | `--draft` 모드 | FR-013 | `spec/cli.md` §9 |
+구현된 FR: FR-008~FR-011(`push`, 일반 notes 경로 + 멱등성), FR-016(`doctor`),
+FR-017(`clean`), FR-019(`open`), FR-013(`--draft`).
 
-**설계는 확정됐다** (2026-10-13). 스펙에 반영된 것 셋 —
-`server.missing` 으로 사라진 스레드를 보존하고 `push` 가 제외한다(결정 0011),
-draft 생성은 전송이 아니므로 `local.reply` 와 `pushed_hash` 를 발행 시점에만
-갱신하고 `bulk_publish` 는 확인을 요구한다(결정 0012), `status` 의 `push` 블록과
-`push` 의 사전 판정은 같은 함수를 쓴다(`spec/cli.md` §8).
+설계에서 스펙에 반영된 것 셋 — `server.missing`으로 사라진 스레드를 보존하고
+`push`가 제외한다(결정 0011), draft 생성은 전송이 아니므로 `local.reply`와
+`pushed_hash`를 발행 시점에만 갱신하고 `bulk_publish`는 확인을 요구한다(결정
+0012), `status`의 `push` 블록과 `push`의 사전 판정은 같은 함수를 쓴다
+(`spec/cli.md` §8).
 
-**전제는 해소됐다.** 위 "계획 3 전 과제"가 `glab.api`의 상태 코드와 가짜 `glab`
-하네스를 끝냈다. 멱등성·크래시 복구 테스트(`spec/testing.md` §6)를 바로 쓸 수 있고,
-`local.push_error.status`를 채울 수 있다. 계약은 `spec/cli.md` §3과
-`spec/testing.md` §2에 있다.
+### 실측 — 읽기 절반만 (2026-10-14)
 
-**잊기 쉬운 것:** resolve 403은 정상 경로다. 권한은 `pull`에서 확인해 `status`가
-사전에 알리고, 그래도 403이 나면 `push_error`에 기록하고 state를 `replied`로
-강등한다. `--resolve auto`에서 권한이 없어 생략한 경우는 exit 0이다 — 요청하지
-않은 일은 실패가 아니다.
+`gitlab.com/jngbng/mr-helper` MR `!1`(코멘트 15개)을 클론해 `pull` → `status` →
+`push --dry-run`을 돌렸다. `pull` 3.2초, 재앵커링 exact 12 / fuzzy 0 / stale 0
+(위치가 있는 12건 전부 exact, 나머지 3건은 `location: null`인 개별 노트/일반
+코멘트라 재앵커링 통계에서 빠진다), `status` 0.15초, `push --dry-run` 0.7초
+("보낼 것이 없습니다" — 모든 스레드가 아직 처리 전 `todo`). 가장 시간을 쓴
+지점은 네트워크 왕복(`pull`의 3.2초 대부분)이고, 로컬 계산(`status`/`dry-run`)은
+1초 미만이다.
+
+**쓰기 절반(코멘트 처리 + `mrq push`)은 돌리지 않았다.** 아래 체크리스트로
+이어서 할 것.
+
+### 남은 측정 — 쓰기 절반 (사용자 판단으로 미룸)
+
+`mrq push`(실제 전송)는 `gitlab.com/jngbng/mr-helper` MR `!1`의 코멘트 15개를
+**소비한다** — 답글이 올라가고 스레드가 resolve된다. 다시 쓸 수 없는 픽스처이므로
+언제 돌릴지는 작업자가 정한다.
+
+```bash
+cd /path/to/mr-helper-clone   # git checkout feat/retry
+# review.md 를 AI 와 사람이 처리 — 15개 코멘트에 답글/상태를 채운다
+time mrq sync
+mrq status
+time mrq push --dry-run       # 처리 후 숫자로 다시 확인
+time mrq push
+```
+
+`spec/testing.md` §8의 표를 그대로 채운다 — 위 읽기 절반의 두 줄은 이미 메웠다:
+
+| 단계 | 측정 | 기록 |
+|---|---|---|
+| `mrq pull` 실행 시간 | 초 | 3.2초 (2026-10-14 실측) |
+| 재앵커링 결과 | exact / fuzzy / stale | exact 12 / fuzzy 0 / stale 0 (2026-10-14 실측) |
+| 위치가 틀려서 직접 찾은 코멘트 수 | 건 | |
+| 코멘트별 처리 시간 | 초 (유형별) | |
+| `mrq status` 확인 시간 | 초 | 0.15초 (처리 전, 2026-10-14 실측) |
+| `mrq push` 실행 시간 | 초 | |
+| 총 소요 시간 | 분 | |
+| 가장 시간을 많이 쓴 지점 | | |
+
+돌린 뒤 행동 가능한 항목이 나오면 `docs/plans/2026-10-12-cli-core-residuals.md`에
+새 항목으로 적는다.
 
 ---
 
