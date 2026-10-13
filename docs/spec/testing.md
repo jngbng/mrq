@@ -220,6 +220,8 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | mrq 가 만들지 않은 draft 가 있는데 `--publish` | 확인 요구. `--force` 로 진행 |
 | `--draft` 인데 `capabilities.draft_notes == false` | exit 1. 일반 notes 경로로 빠지지 않는다 |
 | draft 를 만든 뒤 md 에서 답글을 고치고 `--publish` | `local.reply` 를 비우지 않는다. 다음 `push` 가 새 본문을 전송한다 (`cli.md` §9) |
+| `--draft` 인데 `decision.record_hash`만 있음(2차 방어) | draft 를 만들지 않는다. `pushed_hash` 기록 |
+| `--draft --force` (답글 POST 성공 뒤 기록 전에 사망, 재실행) | 스냅샷의 동일 본문 체크로 그 본문의 draft 를 다시 만들지 않는다 |
 
 "스레드 3개 중 2번째에서 사망" 행을 확인하려면 중간 상태의 json을 직접 읽어
 단언한다. 매 스레드 후 flush를 하는지가 검증 대상이다.

@@ -342,6 +342,26 @@ def _create_drafts(
     """답글과 resolve 를 draft 하나로 묶는다. resolve 는 `resolve_discussion`
     에 실어 보내고 별도 `PUT discussions` 는 보내지 않는다(MUST NOT).
 
+    `sheet.targets()`가 내놓는 `Decision`을 `_send`와 **같은 순서로** 읽는다
+    (Critical 교정) — record_hash 먼저, 그다음 reply, 그 다음에야 resolve를
+    같은 draft에 묶는다. 두 함수가 같은 Decision을 다르게 읽으면 한쪽에서
+    고친 버그(2차 방어)가 다른 쪽(이 함수)에는 그대로 남는다.
+
+    `decision.record_hash`는 2차 방어(스냅샷에 같은 본문의 내 note가 이미
+    있음)가 걸렸다는 뜻이다 — 그 답글은 이미 **실제 note**로 서버에 있으므로
+    draft로 묶을 것이 없다. `_send`처럼 해시만 기록한다(§9 MUST) — 기록하지
+    않으면 다음 실행도 매번 스냅샷에 의존한다. `decision.reply`는 이 경우
+    항상 비어 있다(`push.plan`이 둘을 같이 채우지 않는다) — 그래서
+    `thread.local.reply`로 폴백하면(교정 전 버그) 이미 전송된 본문이 되살아나
+    또 draft로 올라간다.
+
+    `reply`가 없는데 `resolve`만 남은 경우(record_hash 뒤에 남은 resolve
+    포함)는 Important 2와 같은 이유로 draft를 만들 수 없다 — `POST
+    draft_notes`의 `note`는 필수라 빈 본문은 GitLab이 거부하거나(400),
+    받아들이면 빈 note가 실제로 생긴다. §9가 별도 `PUT discussions`를
+    금지하므로(MUST NOT) draft 경로로는 resolve만 표현할 수 없다. 건너뛰고
+    이름을 대 일반 `push`를 안내한다 — 리뷰어가 추적을 잃지 않게.
+
     중복 방어 키는 `(discussion_id, body)` 다 — `resolve_discussion` 은 보지
     않는다. 그래서 답글 본문은 그대로인데 새로 resolve 가 필요해진 스레드는
     이미 있는 draft(resolve 없음)에 가로막혀 조용히 생략된다. draft 수정은
@@ -356,11 +376,33 @@ def _create_drafts(
     attempted = 0
     created = 0
     for decision in sheet.targets():
-        if not decision.reply and not decision.resolve:
-            continue
-        attempted += 1
         thread = by_id[decision.thread]
-        body = decision.reply or thread.local.reply
+
+        if decision.record_hash:
+            # 2차 방어 — 답글은 이미 실제 note 로 서버에 있다. `_send`와 같은
+            # 방식으로 기록만 한다(Critical 교정).
+            _mark_sent(thread, decision.record_hash)
+            if decision.resolve:
+                print(
+                    f"⚠ {thread.id[:8]} 답글은 이미 서버에 있고 resolve 만 남았습니다 — "
+                    "본문 없는 draft 는 만들 수 없습니다. `mrq push` 로 resolve 하세요.",
+                    file=sys.stderr,
+                )
+            store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
+            continue
+
+        if not decision.reply:
+            if decision.resolve:
+                # Important 2 — resolve-only 스레드는 draft 로 표현할 수 없다.
+                print(
+                    f"⚠ {thread.id[:8]} resolve 만 있는 스레드는 draft 로 만들 수 없습니다 "
+                    "(본문 없는 draft 는 보낼 수 없습니다) — `mrq push` 로 resolve 하세요.",
+                    file=sys.stderr,
+                )
+            continue
+
+        attempted += 1
+        body = decision.reply
         key = (thread.id, body.strip())
         if key in existing:
             # 1단계의 중복 방어. 이미 같은 쌍의 draft 가 있다 — 조용히 생략한다.

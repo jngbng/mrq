@@ -3,6 +3,60 @@ import json
 from mrq import model, push, store
 from mrq.__main__ import main
 from tests.pushkit import DRAFTS, PUBLISH, pushable, read, set_local  # noqa: F401
+from tests.pushkit import snapshot_ndjson as _snapshot_ndjson
+
+DISCUSSIONS = "GET projects/:fullpath/merge_requests/1234/discussions"
+
+
+def test_draft_record_hash_decision_records_without_creating_draft(pushable, glab):  # noqa: F811
+    # Critical — `_create_drafts`가 `decision.record_hash`를 읙지 않으면
+    # (2차 방어가 걸려 답글이 이미 실제 note 로 서버에 있는데도) 기록을
+    # 빠뜨린다. `_send`와 같은 방식으로 `pushed_hash`를 기록해야 한다
+    # (`cli.md` §9 MUST) — 안 그러면 다음 실행도 매번 스냅샷에 의존한다.
+    set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="이미 올라갔다")
+    glab.route(DISCUSSIONS, pages=[_snapshot_ndjson(bodies={"a1b2c3d4e5f6": ["이미 올라갔다"]})])
+    glab.route(f"GET {DRAFTS}", [])
+
+    assert main(["push", "--draft"]) == 0
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "draft_notes" in c["argv"][1]
+        and "--method" in c["argv"]
+        and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+    target = next(t for t in read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.pushed_hash == push.body_hash("이미 올라갔다")
+    assert target.local.reply == ""
+
+
+def test_draft_force_after_crashed_post_does_not_duplicate_body(pushable, glab):  # noqa: F811
+    # Critical — 일반 `push`가 답글 POST 성공 직후, `pushed_hash` 기록 전에
+    # 죽었다고 가정한다: `local.reply`는 아직 비어 있지 않다. 사용자가
+    # `push --draft --force`로 재실행하면 2차 방어(스냅샷의 동일 본문)가
+    # 걸려 `decision.reply`는 비고 `decision.record_hash`가 채워지지만
+    # `decision.resolve`는 그대로 살아 있다(이 스레드는 `done` + resolvable).
+    # 고쳐지기 전에는 `body = decision.reply or thread.local.reply` 가 이미
+    # 전송된 본문을 되살려 그 본문으로 또 draft 를 만들었다 — 리뷰어가
+    # 중복 전송을 보게 된다.
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(DISCUSSIONS, pages=[_snapshot_ndjson(bodies={"a1b2c3d4e5f6": ["확인했습니다"]})])
+    glab.route(f"GET {DRAFTS}", [])
+
+    assert main(["push", "--draft", "--force"]) == 0
+
+    created = [
+        c
+        for c in glab.calls()
+        if "draft_notes" in c["argv"][1]
+        and "--method" in c["argv"]
+        and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+    assert not created, "이미 전송된 답글을 draft 로 다시 만들었다 — 중복 전송"
+    target = next(t for t in read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.pushed_hash == push.body_hash("확인했습니다")
+    assert target.local.reply == ""
 
 
 def test_draft_bundles_reply_and_resolve(pushable, glab):  # noqa: F811
