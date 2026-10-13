@@ -246,7 +246,7 @@ def test_status_push_block_matches_plan_without_snapshot():
     assert payload["warnings"] == sheet.warnings
 
 
-def test_status_warns_about_missing_thread_and_recorded_failure():
+def test_status_warns_about_missing_thread_and_recorded_failure(ready, capsys):
     # 표본의 다른 두 스레드(c3d4e5f6a1b2, d4e5f6a1b2c3)에도 미전송 답글이
     # 있으므로, 절대 수(`replies == 0`)를 보려면 비워야 한다 — 그 두 스레드는
     # 이 테스트와 무관하다.
@@ -261,3 +261,25 @@ def test_status_warns_about_missing_thread_and_recorded_failure():
     assert {"thread": "a1b2c3d4e5f6", "reason": "server-missing"} in payload["warnings"]
     assert payload["push"]["replies"] == 0
     assert payload["push"]["skip"] == 1
+
+    # Minor 11 — testing.md §5 "resolve 403 이 기록된 뒤 status | push-failed
+    # 경고가 보인다" 행은 이 이름의 테스트가 지금까지 push_error 를 전혀
+    # 설정하지 않아 실제로는 검증하지 않았다. push_error 가 json 안에만
+    # 남지 않고(cli.md §9) `mrq status` 의 렌더된 화면에도 보이는지 끝까지
+    # 확인한다.
+    failed = next(t for t in review.threads if t.id == "b2c3d4e5f6a1")
+    failed.local.push_error = {
+        "op": "resolve",
+        "status": 403,
+        "reason": "forbidden",
+        "retryable": False,
+        "at": "2026-10-13T10:02:00+09:00",
+        "message": "403 Forbidden",
+    }
+    with store.review_lock(ready, review.iid):
+        surface.write(ready, review, include_resolved=True)
+
+    assert main(["status"]) == 0
+    out = capsys.readouterr().out
+    assert "b2c3d4e5f6a1"[:8] in out
+    assert "지난 전송이 실패했습니다" in out
