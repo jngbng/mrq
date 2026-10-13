@@ -103,6 +103,12 @@ R6·R7은 둘 다 **손으로 쓴 픽스처가 구현과 같은 틀린 가정을
 | 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | `spec/cli.md` §11~13 |
 | 12 | `--draft` 모드 | FR-013 | `spec/cli.md` §9 |
 
+**설계는 확정됐다** (2026-10-13). 스펙에 반영된 것 셋 —
+`server.missing` 으로 사라진 스레드를 보존하고 `push` 가 제외한다(결정 0011),
+draft 생성은 전송이 아니므로 `local.reply` 와 `pushed_hash` 를 발행 시점에만
+갱신하고 `bulk_publish` 는 확인을 요구한다(결정 0012), `status` 의 `push` 블록과
+`push` 의 사전 판정은 같은 함수를 쓴다(`spec/cli.md` §8).
+
 **전제는 해소됐다.** 위 "계획 3 전 과제"가 `glab.api`의 상태 코드와 가짜 `glab`
 하네스를 끝냈다. 멱등성·크래시 복구 테스트(`spec/testing.md` §6)를 바로 쓸 수 있고,
 `local.push_error.status`를 채울 수 있다. 계약은 `spec/cli.md` §3과

@@ -121,6 +121,9 @@ UTC, 밀리초, `Z` 접미사(`"2026-10-12T23:07:20.443Z"`). 손으로 쓴 `+09:
   `discussions-page1.ndjson`. 라우트에 `pages` 로 등록한다
 - `permissions.project_access.access_level`이 20인 프로젝트 (403 경로)
 - `position_type`이 `image`인 노트
+- `draft_notes` 목록 (`discussion_id`·`note`·`resolve_discussion`)과 `bulk_publish`
+  응답. **draft 는 실측 대조가 없는 유일한 경로다** — 손으로 쓴 픽스처가 구현과 같은
+  틀린 가정을 공유하는 일이 R6·R7 에서 실제로 일어났으므로 실제 MR 로 한 번 받아 본다
 
 ### 실제 API 응답과 대조한다
 
@@ -182,6 +185,9 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | `pull` 후 브랜치 변경 → `sync`/`reply`/`state` | exit 1, **아무것도 쓰지 않음**. 엉뚱한 MR에 답글을 남기지 않는다 (`cli.md` §2) |
 | `pull` 후 브랜치 변경 → `reanchor` | exit 1, **아무것도 쓰지 않음**. 다른 브랜치의 작업 트리로 계산한 `location`/`confidence`가 그럴듯한 틀린 값으로 남지 않는다 |
 | `reply -m ""` 또는 빈 stdin | exit 1. 미전송 답글이 빈 본문으로 덮이지 않는다 |
+| resolve 403 이 기록된 뒤 `status` | `push-failed` 경고가 보인다. `push_error` 가 json 안에만 남지 않는다 |
+| `pull` 후 브랜치 변경 → `push` | exit 1, **아무것도 전송하지 않음**. 내부 `sync` 가 아니라 자기 시작점에서 막는다 |
+| `.mrq/` 가 없는 저장소에서 `doctor` | 끝까지 돌고 `.mrq/` 를 만들지 않는다 |
 | 답글이 코드 펜스를 닫지 않아 다음 스레드 블록이 삼켜짐 | exit 2, 아무것도 쓰지 않음. 삼킨 앵커 id를 보고한다 (`review-md.md` §7) |
 
 ---
@@ -197,9 +203,16 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | resolve 403 | `push_error` 기록, state `replied` 강등, **재실행 시 resolve 재시도 없음** |
 | 서버에서 변경된 스레드 | 건너뜀. `--force`로 전송 |
 | 스레드 3개 중 2번째에서 사망 | 1번째 결과가 json에 남아 있음 |
+| `pushed_hash` 없이 같은 본문의 내 note 가 스냅샷에 있음 | 전송 생략 + **`pushed_hash` 기록** (`cli.md` §9) |
+| 스냅샷에 없는 스레드 (`server.missing`) | 건너뜀. `--force` 로도 전송하지 않는다. `local.*` 보존 |
+| `--draft` 재실행 | `GET draft_notes` 비교로 draft 를 복제하지 않는다 |
+| `--draft` + `GET draft_notes` 실패 | draft 를 만들지 않는다 (방어 없이 만들면 복제된다) |
+| mrq 가 만들지 않은 draft 가 있는데 `--publish` | 확인 요구. `--force` 로 진행 |
+| `--draft` 인데 `capabilities.draft_notes == false` | exit 1. 일반 notes 경로로 빠지지 않는다 |
+| draft 를 만든 뒤 md 에서 답글을 고치고 `--publish` | `local.reply` 를 비우지 않는다. 다음 `push` 가 새 본문을 전송한다 (`cli.md` §9) |
 
-마지막 행을 확인하려면 중간 상태의 json을 직접 읽어 단언한다. 매 스레드 후 flush를
-하는지가 검증 대상이다.
+"스레드 3개 중 2번째에서 사망" 행을 확인하려면 중간 상태의 json을 직접 읽어
+단언한다. 매 스레드 후 flush를 하는지가 검증 대상이다.
 
 ---
 

@@ -29,7 +29,8 @@ mrq doctor
 | `status` `list` | — | — | 없음 |
 | `reply` `state` | — | — | json + md 재렌더 |
 | `push` | ✓ | ✓ (내부 `sync`) | json + md |
-| `open` `doctor` | ✓ | — | 없음 |
+| `open` | — | — | 없음 |
+| `doctor` | ✓ | ✓ | 없음 |
 | `clean` | ✓ (MR 상태 확인) | — | `.mrq/` 디렉터리 제거 |
 
 `reply`와 `state`는 **md를 즉시 재렌더해야 한다**(MUST). AI가 CLI로 상태를 바꾸면
@@ -81,12 +82,14 @@ md와 `v:` 해시가 함께 갱신되므로, 사람이 그 뒤에 파일을 열�
 | 명령 | 동작 |
 |---|---|
 | `status` `list` | 두 브랜치 이름과 `mrq pull` 안내를 stderr로 경고. 종료 코드는 그대로 |
-| `sync` `reply` `state` `reanchor` | **exit 1**, 아무것도 쓰지 않음 |
+| `sync` `reply` `state` `reanchor` `push` | **exit 1**, 아무것도 쓰지 않음 |
 | `pull` | 자체 탐지(§4 2단계)가 처리하므로 검사하지 않는다 |
 
 읽기를 끊지 않는 이유는 세션 중간에 AI의 읽기 경로를 막는 것이 낡은 상태를 보여주는
 것보다 나쁘기 때문이고, 쓰기를 막는 이유는 엉뚱한 MR에 답글을 남기는 것이 실제
-손해이기 때문이다. `reanchor`도 쓰기다 — `location`이 재계산 가능하다는 것은 위로가
+손해이기 때문이다. `push`가 그 손해를 실제로 실행하는 명령이므로 가장 앞에서
+막혀야 하고, 내부 `sync`가 거부하는 것에 의존하지 않고 **자기 시작점에서**
+확인한다. `reanchor`도 쓰기다 — `location`이 재계산 가능하다는 것은 위로가
 되지 않는다. 다른 브랜치의 작업 트리로 계산한 위치와 `confidence`가 그럴듯한 틀린
 값으로 json에 남아 md와 `status`의 품질 수치에 그대로 나오며, 그것을 덮어쓸 다음
 `pull`을 강제하는 장치가 없다. 에디터가 키 한 번으로 부르는 경로라(`editor.md` §3.2)
@@ -232,7 +235,10 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 
 - 리모트는 `origin` 고정이다. fork 워크플로는 범위 밖
 - 2건 이상이면 목록을 출력하고 `--mr`로 지정하라고 안내한다(MUST)
-- 기존 `local.*`를 덮어쓰면 안 된다(MUST NOT). 서버에서 사라진 스레드만 제거한다
+- 기존 `local.*`를 덮어쓰면 안 된다(MUST NOT). 응답에서 사라진 스레드는 제거하되,
+  미전송 작업(`local.reply`가 비어 있지 않거나 `local.state != todo`)이 있으면
+  제거하지 않고 `server.missing = true`로 표시한다. 다시 나타나면 `false`로
+  되돌린다 (`data-model.md` §4.10)
 - 2b에서 `source_branch`를 확인해야 한다(MUST). 브랜치를 바꿨는데 `current`를 그대로
   쓰면 다른 MR의 상태를 보게 된다
 - `--render`는 md만 다시 그린다 (`.mrq/`가 날아간 경우의 복구 경로)
@@ -273,6 +279,15 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 잘못된 대상에 sync하면 답글이 엉뚱한 스레드로 들어간다.
 
 `review.md`가 없으면 exit 1과 함께 `mrq pull --render`를 안내한다(MUST).
+
+### 답글이 있는데 `todo`인 스레드
+
+반영 후 `local.reply`가 비어 있지 않은데 `local.state == todo`인 스레드는
+**경고해야 한다**(MUST) — `todo`에 대해 `push`는 아무것도 하지 않으므로
+(`data-model.md` §4.7) 답글을 쓴 사람은 전송될 것으로 읽는데 실제로는 조용히
+남는다. 경고는 알리기만 하고 `push`의 동작도 상태도 바꾸지 않는다(MUST NOT) —
+`[ ]`로 두고 초안을 적어 두는 것은 정상 워크플로다. `status`도 같은 이름의 경고를
+낸다(§8).
 
 ### `sync --json`
 
@@ -377,7 +392,20 @@ push      replies 9 · resolves 8 · skip 1
 `push` 블록이 **전송 직전 검토면**이다. 30분 예산에서 사용자가 마지막으로 보는
 화면이며, "9건 답글 / 8건 resolve"가 기대와 맞는지 확인하는 것으로 충분해야 한다.
 `skip`은 전송 대상이지만 **로컬에서 이미 보낼 수 없다고 아는** 스레드의 수다 —
-`no-reply`와 `not-resolvable`이 전부다.
+`no-reply`, `not-resolvable`, `server-missing`이 전부다. `todo-with-reply`는
+경고일 뿐 전송 대상이 아니므로(`todo`에 `push`는 아무것도 하지 않는다) `skip`에
+들어가지 않는다.
+
+### `status`와 `push`는 같은 판정 함수를 쓴다
+
+`push` 블록의 숫자는 `push`의 사전 판정(§9 3단계)과 **같은 함수**에서 나와야
+한다(MUST). `status`는 서버 스냅샷 없이, `push --dry-run`은 스냅샷을 들고 같은
+함수를 부르므로 두 출력의 차이는 `server-changed` 하나로 한정된다. 함수는
+`--resolve` 모드와 `--force`도 입력으로 받으며, `status`는 **기본값**(`auto`,
+`--force` 없음)으로 부른다(MUST) — 검토면은 사용자가 플래그 없이 `push`를 쳤을 때
+일어날 일을 보여야 한다. 판정을 두 곳에
+따로 구현하면 "검토면은 9건이라고 했는데 8건 갔다"가 조용히 생기고, 숫자가 틀리는
+순간 검토면 자체가 의미를 잃는다.
 
 `status`는 **오프라인에서 계산할 수 있는 것만** 보고한다(MUST). "pull 이후 서버에서
 바뀌었는가"는 네트워크 없이 답할 수 없으므로(§1) 여기서 다루지 않는다 — `server.*`는
@@ -412,8 +440,14 @@ push      replies 9 · resolves 0
   ] }
 ```
 
+마지막 `push`에서 실패가 기록된 스레드(`local.push_error != null`)는 `push-failed`
+경고로 내야 한다(MUST). `push` 자신의 출력은 그 순간에만 보이므로, 그것이 유일한
+표면이면 403과 네트워크 실패가 json 안에만 남는다 — 다음 날 터미널을 다시 연
+사람에게는 사라진 것과 같다.
+
 `warnings[].reason`은 열거값이다 — `no-reply`, `not-resolvable`,
-`no-resolve-permission`, `mr-not-opened`. 문자열 메시지를 파싱하게 만들지 않는다(MUST NOT).
+`no-resolve-permission`, `mr-not-opened`, `server-missing`, `todo-with-reply`,
+`push-failed`. 문자열 메시지를 파싱하게 만들지 않는다(MUST NOT).
 `server-changed`는 위 이유로 `status`에 없다 — `push`의 `--dry-run`/`--json`이 쓴다(§9).
 
 ---
@@ -421,30 +455,75 @@ push      replies 9 · resolves 0
 ## 9. `push` (FR-008 ~ FR-011)
 
 ```
-1. sync 실행 (md → json + 재앵커링)
+1. sync 실행 (md → json + 재앵커링). push 가 잡은 락 안에서 수행한다
    에러(2) / 충돌(3)이면 즉시 중단
 2. discussions 전체를 한 번 재조회 → 스냅샷
-3. 스레드별 사전 판정:
-   - server.updated_at 또는 note_count가 pulled 시점과 다름 → 건너뜀
-     (--force로 무시)
-   - 내 note 중 body가 local.reply와 동일한 것이 이미 있음 → 답글 생략
+3. 스레드별 사전 판정 (status 와 같은 함수, §8):
+   - 스냅샷에 없음 → server-missing 으로 건너뜀
+   - server.updated_at 또는 note_count 가 스냅샷과 다름
+     → server-changed 로 건너뜀 (--force 로 무시)
+   - 내 note 중 body 가 local.reply 와 같음 → 답글을 생략하고 pushed_hash 기록
 4. 대상 스레드마다:
    a. repliable && reply != "" && sha256(reply) != pushed_hash
       → POST notes (-F body=@-)
-      → 성공 즉시: pushed_hash 기록, local.reply = "", touched_by = "push"
+      → 성공 즉시: pushed_hash 기록, local.reply = "", push_error = null,
+        touched_by = "push"
    b. state == done && resolvable && !resolved && resolve 요청됨
       → PUT discussions resolved=true
-      → 403: push_error 기록, state를 replied로 강등, 경고
-   c. 스레드 하나가 끝날 때마다 json을 flush
-5. pull 재실행
+      → 403: push_error 기록, state 를 replied 로 강등, 경고
+   c. 스레드 하나가 끝날 때마다 json 을 flush (md 는 그리지 않는다)
+5. 락 해제 → pull 재실행 (md 재렌더가 여기서 한 번 일어난다)
 ```
 
 - 2단계에서 **전체를 한 번만** 조회해야 한다(MUST). 스레드별 GET은 N+1이다
-- 3단계의 "동일 본문 체크"는 `pushed_hash`와 이중 방어다. `pushed_hash` 기록
-  직전에 프로세스가 죽은 경우를 잡는다
+- 1단계의 `sync`는 `push`가 잡은 **같은 락 안에서** 돌아야 한다(MUST). 락을 두 번
+  잡으면 그 틈에 에디터의 `sync`가 끼어들어 검토면에서 본 것과 다른 것을 보낸다
+- `server-missing`은 `--force`로도 전송하지 않는다(MUST). `--force`가 무시하는 것은
+  "서버가 바뀌었다"뿐이고, "서버에 없다"는 보낼 곳이 없는 것이다
+  (`data-model.md` §4.10)
 - 4a의 `local.reply = ""`가 필수다(MUST). 비우지 않으면 재pull 후 md에 같은 답글이
   인용과 reply 양쪽에 두 번 보인다. `pushed_hash`가 남으므로 재전송되지 않는다
-- 4c의 즉시 flush가 필수다(MUST). 중간에 죽어도 재실행으로 복구되어야 한다
+- 4c의 즉시 flush가 필수다(MUST). 중간에 죽어도 재실행으로 복구되어야 한다.
+  flush는 **json만** 한다 — md는 5단계의 재pull이 한 번 그린다. 중간에 죽어 md가
+  낡아도 거짓 충돌은 생기지 않는다(`data-model.md` §5.2): md의 값은 자기 `v`와
+  같으므로 "json 유지"이고, 사람이 그 낡은 md의 답글을 고쳐 `sync`해도
+  `pushed_hash`가 재전송을 막는다
+- 5단계의 재pull이 실패해도 종료 코드는 **전송 결과를 따른다**(MUST). 전송 결과는
+  이미 json에 있고, 그것을 네트워크 실패로 덮으면 사용자가 "안 갔다"로 읽는다.
+  재pull 실패는 경고다
+
+### 멱등성 두 겹 (FR-009)
+
+| 순서 | 방어 | 잡는 사망 시점 |
+|---|---|---|
+| 1 | `sha256(전송 본문) == local.pushed_hash` | POST 성공 + 기록 성공 후 |
+| 2 | 스냅샷의 내 note 중 본문이 `local.reply`와 같음 | POST 성공 직후, 기록 **전** |
+
+해시 대상은 **실제로 stdin에 넣은 바이트**다 — `local.reply` 그대로다. 2차 방어의
+본문 비교만 양쪽을 `strip()`해 느슨하게 본다(SHOULD). GitLab이 끝 공백을 다듬어
+돌려주면 엄격 비교가 중복 전송을 허용하고, 두 실패 양상의 비용이 다르다 — 느슨한
+쪽은 전송을 한 번 빼먹고 사용자가 `status`에서 그것을 보지만, 엄격한 쪽은 같은
+답글을 두 번 올리고 PRD의 "중복 전송 0건"을 깬다.
+
+2차 방어에 걸렸을 때 `pushed_hash`를 **기록해야 한다**(MUST). 기록하지 않고
+건너뛰기만 하면 다음 실행도 매번 스냅샷에 의존하고, 그 note가 스냅샷에서 빠지는
+경우(페이지 결손)에 중복 전송으로 되돌아간다.
+
+### 실패 기록 (`local.push_error`)
+
+| 실패 | 기록 | local 상태 | 종료 코드 |
+|---|---|---|---|
+| reply POST 실패 | `op: "reply"` | `local.reply`를 **비우지 않는다**(MUST) | 4 |
+| resolve 403 | `op: "resolve"` | `state`를 `replied`로 강등 | 4 |
+| resolve 그 외 실패 | `op: "resolve"` | 상태 유지 | 4 |
+
+`status`·`reason`·`retryable`은 `GlabError`의 값을 그대로 쓴다(§3). 작업이 성공하면
+`push_error`를 `null`로 되돌려야 한다(MUST) — 낡은 실패가 남으면 에디터가 이미
+해결된 문제를 계속 보여준다.
+
+403에서 `replied`로 강등하는 것이 중요한 이유는 재시도 루프가 상태 기계 차원에서
+닫히기 때문이다 — 다음 `push`에서 `replied`는 애초에 resolve 대상이 아니다. 원래
+의도는 `push_error`에 남아 잃지 않는다.
 
 ### MR이 열려 있지 않을 때
 
@@ -493,7 +572,12 @@ f6e5d4c3  reply(88B)              src/api/legacy.py:1    `stale`
 9988aabb  resolve                 src/util.py:12
 7766ccdd  skip  no-reply          (general)
 5544eeff  skip  server-changed    src/api/client.py:60
+3322bbaa  skip  server-missing    src/api/old.py:9
 ```
+
+`skip` 이유는 열거값이며 `--json`과 같은 값을 쓴다(MUST) — `no-reply` ·
+`not-resolvable` · `no-resolve-permission` · `server-changed` · `server-missing`.
+문자열 메시지를 파싱하게 만들지 않는다(MUST NOT).
 
 ### `--draft` (FR-013)
 
@@ -501,9 +585,53 @@ f6e5d4c3  reply(88B)              src/api/legacy.py:1    `stale`
 따라서 답글과 resolve를 하나의 draft로 묶고, `--publish`가 `bulk_publish`로 일괄
 발행한다. 리뷰 한 라운드를 통째로 묶어 보낼 수 있다.
 
+대상 판정은 일반 경로와 **같은 함수**를 쓴다(§8). 다른 것은 전송 방법뿐이다.
+
 `capabilities.draft_notes == false`면 `--draft`를 **명확한 메시지와 함께 거부해야
 한다**(MUST). 조용히 일반 notes 경로로 빠지면 안 된다(MUST NOT) — 사용자는 draft로
 갔다고 믿는다.
+
+**draft 생성은 전송이 아니다.** 따라서 생성 시점에 `pushed_hash`를 기록하지 않고
+`local.reply`도 비우지 않는다(MUST NOT) — 발행하지 않으면 그 답글은 GitLab의 내
+draft 안에만 있고, 로컬에서 지우면 사용자가 자기 글을 잃는다. 둘은 **발행 시점에만**
+갱신한다. 근거는
+[0012](../decisions/0012-draft-is-not-a-send.md)에 있다.
+
+| 단계 | 동작 |
+|---|---|
+| 1 | `GET draft_notes` 한 번 → `(discussion_id, note)` 집합 |
+| 2 | 집합에 같은 쌍이 있으면 생성을 생략 |
+| 3 | `POST draft_notes` — `note`, `in_reply_to_discussion_id`, 그리고 resolve 요청이면 `resolve_discussion: true` |
+| 4 | `--publish`면 `POST bulk_publish` 한 번 → 발행 직전 목록을 근거로 `pushed_hash` 기록 + `local.reply` 정리 |
+
+- 4단계에서 기록하는 `pushed_hash`는 **발행된 draft 본문**의 해시다. 그리고
+  `local.reply`는 그 본문과 **현재 값이 같을 때만** 비운다(MUST) — draft를 만든 뒤
+  사용자가 md에서 답글을 고쳤다면 비우는 것이 그 수정을 지운다. 다르면 해시만
+  기록하고 답글은 남긴다. 해시가 다르므로 다음 `push`가 새 본문을 정상 전송한다
+- `--publish` 단독은 1·2단계(`sync`·스냅샷)를 생략한다. 발행할 draft는 이미
+  있고 대상 판정이 필요 없다. 4단계의 json 갱신과 5단계의 재pull은 그대로 한다
+- draft 생성 실패와 발행 실패는 `push_error`에 `op: "draft"` / `op: "publish"`로
+  기록하고 **exit 4**다. 일반 경로의 부분 실패와 같은 취급이다
+- 1단계가 **중복 방어 전부**다(MUST). `pushed_hash`가 아직 없으므로 두 겹이 아니다.
+  그래서 이 조회가 실패하면 draft를 만들지 않는다(MUST) — 방어 없이 만들면
+  재실행이 draft를 복제하고, 사용자는 GitLab UI에서 그것을 손으로 지워야 한다
+- resolve는 `resolve_discussion`으로 draft에 묶는다. 별도 `PUT discussions`를
+  보내지 않는다(MUST NOT). 권한이 없으면 `false`로 보내고 경고한다 — `--resolve`
+  표의 `auto` 행과 같은 판정이다
+- `--draft --publish`(묶어 보내고 즉시 발행)와 `--publish` 단독(지난 draft 발행)을
+  모두 허용한다
+- draft 수정·삭제(`PUT`/`DELETE draft_notes`)는 범위 밖이다. 잘못 만든 draft는
+  GitLab UI에서 지운다
+
+#### `bulk_publish`는 내 draft 전부를 발행한다
+
+`bulk_publish`에는 "이것만 발행" 파라미터가 없다. 따라서 사용자가 GitLab UI에서
+쓰던 미완성 draft까지 함께 공개된다. `--publish`는 1단계 목록에 **mrq가 만들지
+않은 draft**(어느 스레드의 `local.reply`와도 맞지 않는 것)가 있으면 그 수를 보여주고
+**확인을 요구해야 한다**(MUST). `--force`로 진행한다.
+
+`mr_state != "opened"`에 확인을 요구하는 것과 같은 이유다 — 바깥으로 나가고
+되돌릴 수 없다.
 
 ---
 
@@ -568,6 +696,11 @@ resolve 권한  ✓ access_level 40
 storage       ✓ /home/bongya/w/proj/.mrq
 git ignore    ✓ .mrq/.gitignore
 ```
+
+`doctor`는 `.mrq/`를 **만들지 않는다**(MUST NOT) — `.mrq/.gitignore` 보장은 다른
+모든 명령의 시작 규칙이지만(`data-model.md` §1), 진단이 상태를 만들면 "없음"을
+진단할 수 없다. 현재 상태를 그대로 보고한다. `.mrq/`가 없는 저장소에서도 끝까지
+돌아야 한다(MUST).
 
 실패한 항목은 `✗`와 함께 다음에 할 일을 적어야 한다(MUST). 범위가 개인/단일
 인스턴스이므로 환경 문제는 전부 한 머신에서 발생한다. 설정 실패를 추측하게 만들지

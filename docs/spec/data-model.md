@@ -26,7 +26,8 @@
 - 심링크 생성이 실패하면 `current`를 iid만 담은 텍스트 파일로 쓴다(MAY). 소비자는
   `current`가 디렉터리면 그대로 쓰고, 파일이면 내용을 읽어 한 단계 더 들어간다
 - `mrq`는 모든 명령의 시작에서 `.mrq/.gitignore`에 `*` 줄이 있는지 확인하고 없으면
-  추가해야 한다(MUST). `*`가 `.gitignore` 자신까지 매치하므로 `.mrq/` 전체가 git에서
+  추가해야 한다(MUST). **`doctor`는 예외다** — 진단이 상태를 만들면 "없음"을 진단할
+  수 없다(`cli.md` §13). `*`가 `.gitignore` 자신까지 매치하므로 `.mrq/` 전체가 git에서
   사라진다. 리포 루트의 `.gitignore`는 건드리지 않는다(MUST NOT) — 사용자 개인 도구의
   항목을 팀 리포 히스토리에 넣지 않는다
 - `.git/` 아래에는 쓰지 않는다(MUST NOT). `.git/`을 거부하는 샌드박스에서도 동작해야
@@ -117,7 +118,8 @@ MVP에는 마이그레이션 구현체가 없다. 거부 경로만 구현한다(
     "resolved": false,
     "repliable": true,
     "updated_at": "2026-10-05T15:30:00+09:00",
-    "note_count": 2
+    "note_count": 2,
+    "missing": false
   },
 
   "position": {
@@ -193,6 +195,7 @@ GitLab의 discussion 객체에는 `{id, individual_note, notes[]}`만 있다. th
 | `repliable` | `individual_note == false` |
 | `updated_at` | `max(notes[].updated_at)` |
 | `note_count` | `len(notes)` |
+| `missing` | 응답에 없는 스레드를 보존했을 때만 `true` (§4.10) |
 
 **`notes`는 시스템 노트를 제외한 뒤의 목록이다**(MUST). 필터 전 값을 쓰면 안 된다
 (MUST NOT) — 동료가 라벨을 바꾸거나 MR을 재할당한 것만으로 `updated_at`과
@@ -253,7 +256,7 @@ GitLab 응답의 `suggestions` 배열을 변형 없이 보관해야 한다(MUST)
 마지막 전송에서 실패한 작업을 기록한다. 성공하면 `null`로 되돌린다(MUST).
 
 ```jsonc
-{ "op": "resolve",            // reply | resolve
+{ "op": "resolve",            // reply | resolve | draft | publish
   "status": 403,              // HTTP 상태. 네트워크 실패면 null
   "reason": "forbidden",      // forbidden | not-found | conflict | network | unknown
   "retryable": false,
@@ -283,6 +286,28 @@ GitLab 응답의 `suggestions` 배열을 변형 없이 보관해야 한다(MUST)
 
 `location: null`인 스레드는 재앵커링 통계(`exact`/`fuzzy`/`stale`)에서 제외한다(MUST).
 에디터는 진단을 만들지 않는다.
+
+### 4.10 `server.missing` — 응답에서 사라진 스레드
+
+`pull`은 서버 응답에 없는 스레드를 제거한다. 다만 **`local.reply`가 비어 있지
+않거나 `local.state != todo`인 스레드는 제거하지 않고 `server.missing = true`로
+표시만 해야 한다**(MUST). 전송하지 않은 답글은 복구 불가능하고, 실제 삭제와
+`--paginate`가 페이지를 조용히 빠뜨리는 식의 일시적 결손을 응답만으로는 구분할 수
+없다.
+
+- 미전송 작업이 없는 스레드는 그대로 제거한다. 보존해서 표시할 로컬 상태가 없다
+- 다음 `pull`에서 다시 나타나면 `false`로 되돌려야 한다(MUST). 표시가 남으면
+  멀쩡한 스레드가 영구히 전송 대상에서 빠진다
+- `push`는 `missing == true`인 스레드를 전송 대상에서 **제외해야 한다**(MUST).
+  없는 discussion에 POST하면 404이고, 그것을 `push_error`로 배우게 하면 실패가
+  `retryable: false`로 기록되어 "다시는 전송되지 않는다"가 조용히 영구화된다
+- `review.md`와 `list`는 `server-missing` 배지를, `status`와 `push`는 같은 이름의
+  경고·`skip` 이유를 낸다(`cli.md` §8·§9). 사용자가 그 답글을 직접 옮길 수 있어야
+  한다
+- 기존 파일에는 이 키가 없을 수 있다. 읽는 쪽은 부재를 `false`로 다룬다(MUST)
+
+근거와 기각된 대안은
+[0011](../decisions/0011-preserve-missing-threads.md)에 있다.
 
 ---
 
@@ -367,14 +392,7 @@ reply`/`mrq state`(`cli.md` §10)가 `touched_at`을 기록한 **뒤에** md를 
 `pull`은 기존 `local.*`를 보존해야 한다(MUST) — 같은 스레드 id가 있으면 그대로 두고,
 서버에서 사라진 스레드만 제거한다.
 
-> **알려진 데이터 손실 경로 (`docs/plans/2026-10-12-cli-core-residuals.md` R5).** 보존은 "직전 json에 같은
-> id가 있을 때"로 정의되어 있으므로, 스레드가 한 번 응답에서 빠졌다가 다시
-> 나타나면 그 사이의 `local.*`가 영구 소실된다. 서버에서 진짜로 삭제된 경우라면
-> 맞는 동작이지만, `glab --paginate`가 페이지를 조용히 빠뜨리는 식의 일시적
-> 결손에서는 전송하지 않은 답글이 복구 불가로 사라진다.
->
-> 완화책: `local.reply`가 비어 있지 않거나 `local.state != todo`인 스레드는
-> 응답에 없어도 제거하지 말고 "서버에서 사라짐"으로 표시만 한다. 계획 2가 끝난
-> 지금도 넣지 않은 이유는 그 표시를 `push`가 어떻게 다룰지가 계획 3의 영역이고,
-> 스키마에 새 필드를 더하는 결정이 거기에 묶여 있기 때문이다. 잔여 항목 R5에
-> 기록되어 있다.
+보존의 정의는 "직전 json에 같은 id가 있을 때"다. 따라서 응답에서 한 번 빠진
+스레드는 그 자체로 데이터 손실 경로이며, **미전송 작업이 있는 스레드에 한해**
+제거하지 않고 `server.missing`으로 표시한다 — §4.10. 미전송 작업이 없는 스레드는
+그대로 제거한다.

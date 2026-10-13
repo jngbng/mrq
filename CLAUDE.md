@@ -60,6 +60,11 @@ testdata/       세 구현이 공유하는 테스트 데이터
 - **`push`는 스레드마다 결과를 즉시 json에 쓴다.** 중간에 죽어도 복구 가능해야 한다.
   중복 전송 방지는 `pushed_hash`이고, 전송 성공 시 `local.reply`를 비운다.
   `docs/spec/cli.md` §9
+- **`bulk_publish`는 내 draft 전부를 발행한다.** 선택적 발행이 없다. mrq 가 만들지
+  않은 draft 가 있으면 확인을 요구한다. draft 생성은 전송이 아니므로 `local.reply`
+  를 비우지 않는다. `docs/decisions/0012-draft-is-not-a-send.md`
+- **응답에서 사라진 스레드에 미전송 작업이 있으면 지우지 않는다.** `server.missing`
+  으로 표시하고 `push` 는 제외한다. `docs/spec/data-model.md` §4.10
 - **충돌은 스레드 단위.** 서로 다른 스레드를 고치는 것은 충돌이 아니다. 하나라도
   충돌하면 아무것도 쓰지 않는다. `docs/spec/data-model.md` §5
 

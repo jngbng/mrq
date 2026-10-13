@@ -165,6 +165,10 @@
             "note_count": {
               "type": "integer",
               "minimum": 1
+            },
+            "missing": {
+              "type": "boolean",
+              "description": "서버 응답에서 사라졌지만 미전송 작업이 있어 보존한 스레드. 키가 없으면 false (data-model.md §4.10)"
             }
           }
         },
@@ -400,7 +404,9 @@
                 "op": {
                   "enum": [
                     "reply",
-                    "resolve"
+                    "resolve",
+                    "draft",
+                    "publish"
                   ]
                 },
                 "status": {
