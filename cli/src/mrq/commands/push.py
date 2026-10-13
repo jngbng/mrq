@@ -72,18 +72,18 @@ def run(args) -> int:
                 "`.mrq/current` 가 낡은 것을 가리키고 있다는 신호입니다.",
                 force=args.force,
             )
-        if args.draft or args.publish:
+        draft_mode = bool(args.draft or args.publish)
+        if draft_mode:
             failures, pushed = _run_draft(root, review, sheet, args, json_mode=args.json)
         else:
-            failures = _send(root, review, sheet)
-            pushed = None
+            failures, pushed = _send(root, review, sheet)
 
     # `publish_only` 는 md 를 다시 그리지 않는다(ruling 1) — sync 를 건너뛰었으니
     # md 에 아직 반영되지 않은 사용자의 수정이 있을 수 있다. 재pull 이 md 를
     # 덮어쓰면 그 수정이 흔적 없이 사라진다 — 결정 0012 가 막으려는 것과 같은
     # 손실이다. md 를 그대로 두면 다음 `sync`가 그 수정을 받아들인다.
     _repull(iid, json_mode=args.json, no_render=publish_only)
-    return _report(sheet, failures, json_mode=args.json, pushed=pushed)
+    return _report(sheet, failures, json_mode=args.json, pushed=pushed, draft_mode=draft_mode)
 
 
 # `push.SKIP_REASONS` 와 같은 집합을 덮어야 한다. 빠진 값이 있으면 그 스레드의
@@ -217,9 +217,18 @@ def _where(thread: model.Thread) -> str:
     return f"{thread.location.path}:{line}{suffix}"
 
 
-def _send(root, review: model.Review, sheet: push.Plan) -> list[dict]:
+def _send(root, review: model.Review, sheet: push.Plan) -> tuple[list[dict], dict[str, int]]:
+    """실제로 보낸다. 실패 목록과 함께 **실제로 나간** 건수도 돌려준다.
+
+    Important 3 — `pushed.resolves`를 `sheet.resolves`(계획)에서 실패 건수를
+    빼 재구성하면, reply POST 가 실패해 resolve 를 시도조차 하지 않은 경우에도
+    계획에 잡혀 있던 수가 그대로 "보냈다"로 센다. 계획과 실제 전송은 서로
+    다른 질문이다 — 여기서 직접 세어 그 간극을 없앤다.
+    """
     by_id = {t.id: t for t in review.threads}
     failures: list[dict] = []
+    sent_replies = 0
+    sent_resolves = 0
     for decision in sheet.targets():
         thread = by_id[decision.thread]
         # 이번 스레드에서 reply POST 가 실패했는가. §9 의 4a·4b 는 한 스레드에
@@ -238,6 +247,7 @@ def _send(root, review: model.Review, sheet: push.Plan) -> list[dict]:
                 failed_here = True
             else:
                 _mark_sent(thread, push.body_hash(decision.reply))
+                sent_replies += 1
         if decision.resolve and not failed_here:
             try:
                 transport.resolve(review.iid, thread.id)
@@ -251,11 +261,12 @@ def _send(root, review: model.Review, sheet: push.Plan) -> list[dict]:
             else:
                 thread.server.resolved = True
                 thread.local.push_error = None
+                sent_resolves += 1
         # 스레드 하나가 끝날 때마다 json 을 flush 한다(MUST). md 는 그리지
         # 않는다 — 재pull 이 한 번 그린다 (data-model.md §5.2 가 거짓 충돌이
         # 생기지 않는 이유다).
         store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
-    return failures
+    return failures, {"replies": sent_replies, "resolves": sent_resolves}
 
 
 def _mark_sent(thread: model.Thread, digest: str, *, clear_reply: bool = True) -> None:
@@ -539,16 +550,20 @@ def _report(
     failures: list[dict],
     *,
     json_mode: bool,
-    pushed: dict[str, int] | None = None,
+    pushed: dict[str, int],
+    draft_mode: bool = False,
 ) -> int:
-    # `pushed`가 주어지면 `--draft`/`--publish` 경로다 — 그 경로는 실제로 나간
-    # 것만 세어 이미 넘겨준다(ruling 4). `None`이면 일반 경로이고, 여기서
-    # `sheet`(계획)와 실패를 대조해 센다.
-    bundled = pushed is not None
-    if not bundled:
-        sent_replies = sheet.replies - sum(1 for f in failures if f["op"] == "reply")
-        sent_resolves = sheet.resolves - sum(1 for f in failures if f["op"] == "resolve")
-        pushed = {"replies": sent_replies, "resolves": sent_resolves}
+    """`pushed`는 항상 **실제로 나간** 건수다(Important 3) — 호출자(`_send`
+    또는 `_run_draft`)가 직접 세어 넘긴다. 예전에는 일반 경로에서 `sheet`
+    (계획)와 실패를 대조해 재구성했는데, reply POST 가 실패해 resolve 를
+    시도조차 하지 않은 스레드도 계획에 잡힌 수만큼 "보냈다" 로 세어졌다 —
+    계획과 실제 전송은 서로 다른 질문이라 한쪽에서 다른 쪽을 유도하면
+    틀린다.
+
+    `draft_mode`는 표시 문구만 가른다 — `--draft`/`--publish` 경로는
+    `_create_drafts`/`_publish`가 이미 사람이 읽는 줄을 찍었으므로 여기서
+    "pushed: 답글 N건"을 또 찍지 않는다(ruling 4, 중복 방지).
+    """
     if json_mode:
         json.dump(
             {"pushed": pushed, "failures": failures},
@@ -557,14 +572,11 @@ def _report(
         )
         sys.stdout.write("\n")
     else:
-        if not bundled:
+        if not draft_mode:
             if not sheet.decisions:
                 print("보낼 것이 없습니다.")
             else:
                 print(f"pushed: 답글 {pushed['replies']}건 · resolve {pushed['resolves']}건")
-        # bundled 모드는 `_create_drafts`/`_publish`가 이미 사람이 읽는 줄을
-        # 찍었다 — 여기서 "pushed: 답글 N건"을 또 찍으면 draft 생성에도
-        # "답글이 갔다"는 말이 섞인다(ruling 4).
         for failure in failures:
             retry = "재실행하면 다시 시도합니다" if failure["retryable"] else "재시도하지 않습니다"
             print(

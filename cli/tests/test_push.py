@@ -579,12 +579,17 @@ def test_push_keeps_reply_when_post_fails(pushable, glab):  # noqa: F811
     assert target.local.push_error["retryable"] is True
 
 
-def test_push_does_not_resolve_when_reply_fails(pushable, glab):  # noqa: F811
+def test_push_does_not_resolve_when_reply_fails(pushable, glab, capsys):  # noqa: F811
     # Important 1 — "done" + reply 는 POST 와 PUT 둘 다를 만든다. POST 가
     # 실패하면 그 스레드는 아직 "done" 이 아니므로 resolve 를 시도하면 안
     # 된다 — 리뷰어가 "답글 없이 닫힌 스레드" 를 보게 된다. resolve 가 성공해
     # `push_error = None` 으로 되돌리면 §9 가 요구하는 reply 실패 기록도
     # 사라져 `status` 의 `push-failed` 경고가 다시는 뜨지 않는다.
+    #
+    # Important 3 — `_report` 가 `sheet.resolves`(계획) 에서 실패 건수를 빼
+    # `pushed.resolves` 를 재구성하면, resolve 를 **시도조차 하지 않았는데도**
+    # 계획에 잡혀 있던 1 건이 그대로 "보냈다" 로 보고된다. 실제로 나간 건수를
+    # `_send` 가 직접 세어 돌려줘야 한다.
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(
         NOTES.format(did="a1b2c3d4e5f6"),
@@ -594,7 +599,7 @@ def test_push_does_not_resolve_when_reply_fails(pushable, glab):  # noqa: F811
     # 성공했을 resolve 라우트 — 그래도 호출되면 안 된다.
     glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
 
-    assert main(["push"]) == 4
+    assert main(["push", "--json"]) == 4
 
     puts = [
         c
@@ -604,6 +609,11 @@ def test_push_does_not_resolve_when_reply_fails(pushable, glab):  # noqa: F811
     assert not puts, "답글이 실패했는데도 resolve 를 시도했다"
     target = next(t for t in _read(pushable).threads if t.id == "a1b2c3d4e5f6")
     assert target.local.push_error["op"] == "reply"
+    payload = json.loads(capsys.readouterr().out)
+    # resolve 는 시도조차 하지 않았다 — 계획에는 1건 있었지만 실제로 나간
+    # 것은 0건이어야 한다. 리뷰어가 "답글 없이 닫혔다" 는 실제로 일어나지
+    # 않은 일을 봤다고 믿게 하면 안 된다(cli.md §8).
+    assert payload["pushed"] == {"replies": 0, "resolves": 0}
     assert target.local.reply == "확인했습니다"
 
 
