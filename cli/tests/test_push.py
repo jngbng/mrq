@@ -6,12 +6,14 @@ import pytest
 from mrq import discussions, model, push, store, surface, transport
 from mrq.__main__ import main
 from mrq.errors import GlabError
+from tests.pushkit import blank as _blank
+from tests.pushkit import pushable  # noqa: F401
+from tests.pushkit import read as _read
+from tests.pushkit import review as _review
+from tests.pushkit import set_local as _set_local
+from tests.pushkit import snapshot_ndjson as _snapshot_ndjson
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
-
-
-def _review() -> model.Review:
-    return model.loads(SAMPLE.read_text(encoding="utf-8"))
 
 
 def _ready(review: model.Review, thread_id: str, *, state: str, reply: str = "") -> model.Thread:
@@ -19,22 +21,6 @@ def _ready(review: model.Review, thread_id: str, *, state: str, reply: str = "")
     thread.local.state = state
     thread.local.reply = reply
     return thread
-
-
-def _blank(review: model.Review) -> model.Review:
-    """샘플의 미전송 답글과 상태를 비운다.
-
-    `testdata/review/rendered.json` 에는 `replied`/`done` + 답글이 섞여 있다
-    (렌더러 테스트가 그것을 쓴다). 비우지 않으면 `sheet.replies == 0` 같은
-    절대 수 단언이 그 스레드들 때문에 맞지 않는다 — 각 테스트가 필요한
-    스레드만 채운다.
-    """
-    for thread in review.threads:
-        thread.local.state = "todo"
-        thread.local.reply = ""
-        thread.local.pushed_hash = None
-        thread.local.push_error = None
-    return review
 
 
 def test_plan_sends_reply_and_resolve_for_done_thread():
@@ -406,142 +392,12 @@ def test_plan_warns_about_recorded_push_error_and_todo_reply():
     assert {"thread": "f6a1b2c3d4e5", "reason": "todo-with-reply"} in sheet.warnings
 
 
-MR = {
-    "iid": 1234,
-    "title": "Add retry logic to API client",
-    "web_url": "https://gitlab.example.com/g/p/-/merge_requests/1234",
-    "state": "opened",
-    "source_branch": "feat/retry",
-}
 FIXTURES = Path(__file__).parent / "fixtures"
 NOTES = "POST projects/:fullpath/merge_requests/1234/discussions/{did}/notes"
 RESOLVE = "PUT projects/:fullpath/merge_requests/1234/discussions/{did}"
 
 
-@pytest.fixture
-def pushable(git_repo, commit, checkout, glab, monkeypatch):
-    """pull 이 끝난 상태 + 전송 라우트. 샘플 json 을 그대로 디스크에 둔다."""
-    commit({"src/api/client.py": "def fetch(url):\n    resp = session.get(url)\n"})
-    checkout("feat/retry")
-    monkeypatch.chdir(git_repo)
-
-    review = _review()
-    for thread in review.threads:
-        # 샘플에는 미전송 답글이 섞여 있다. 테스트가 "무엇이 전송되는가" 를
-        # 정확히 단언할 수 있도록 비운 뒤 각 테스트가 `set_local` 로 채운다.
-        thread.local.state = "todo"
-        thread.local.reply = ""
-    with store.review_lock(git_repo, review.iid):
-        surface.write(git_repo, review, include_resolved=True)
-    store.write_current(git_repo, review.iid)
-
-    # 재pull 과 스냅샷이 쓰는 읽기 라우트.
-    glab.route("GET projects/:fullpath/merge_requests/1234", MR)
-    glab.route(
-        "GET projects/:fullpath",
-        {
-            "path_with_namespace": "group/sub/project",
-            "permissions": {"project_access": {"access_level": 40}, "group_access": None},
-        },
-    )
-    glab.route("GET user", {"id": 7, "username": "bongya"})
-    glab.route(
-        "GET projects/:fullpath/merge_requests/1234/versions",
-        [
-            {
-                "head_commit_sha": "abc1234",
-                "base_commit_sha": "abc1234",
-                "start_commit_sha": "abc1234",
-            }
-        ],
-    )
-    glab.route("GET projects/:fullpath/merge_requests/1234/draft_notes", [])
-    glab.route(
-        "GET projects/:fullpath/merge_requests/1234/discussions",
-        pages=[_snapshot_ndjson()],
-    )
-    return git_repo
-
-
-def _snapshot_ndjson(
-    *,
-    bodies: dict[str, list[str]] | None = None,
-    resolved: set[str] | None = None,
-) -> str:
-    """샘플 review.json 의 스레드를 GitLab discussions 응답 모양으로 되돌린다.
-
-    스냅샷 비교(updated_at/note_count)가 성립해야 하므로 값을 샘플에서 그대로
-    가져온다. `bodies` 로 특정 스레드에 2차 방어용 "이미 보낸 note" 를 둘 수
-    있다 — 그 스레드는 **원본 노트를 대체한다**(추가하지 않는다). 추가하면
-    `note_count` 가 샘플의 `server.note_count` 와 달라져 `push.plan` 이
-    `server-changed` 로 먼저 건너뛰어 버리고 2차 방어(`_already_posted`)에
-    닿지 못한다 — `discussions.to_threads` 가 실제로 세는 값(필터 후 notes 의
-    길이)과 이 헬퍼가 만드는 값을 맞추기 위한 수정이다.
-
-    `resolved` 로 특정 스레드를 "서버에서 이미 resolve 됐다" 로 강제할 수 있다
-    — 실제 GitLab 은 resolve PUT 이 성공한 뒤의 조회에서 `resolved: true` 를
-    돌려주지만, 샘플은 항상 고정값(`false`)이다. 연속 두 번의 `push` 가 같은
-    스레드를 다루는 테스트(중복 resolve 방지)에서 "성공 전/후" 스냅샷을
-    구분하는 데 쓴다.
-    """
-    out = []
-    for thread in _review().threads:
-        is_resolved = thread.id in (resolved or set()) or thread.server.resolved
-        extra = (bodies or {}).get(thread.id)
-        if extra:
-            notes = [
-                {
-                    "id": 9000 + i,
-                    "author": {"username": "bongya"},
-                    "created_at": thread.server.updated_at,
-                    "updated_at": thread.server.updated_at,
-                    "body": body,
-                    "resolvable": thread.server.resolvable,
-                    "resolved": is_resolved,
-                    "position": None,
-                }
-                for i, body in enumerate(extra)
-            ]
-        else:
-            notes = [
-                {
-                    "id": thread.notes[0].id,
-                    "author": {"username": thread.notes[0].author},
-                    "created_at": thread.notes[0].created_at,
-                    "updated_at": thread.server.updated_at,
-                    "body": thread.notes[0].body,
-                    "resolvable": thread.server.resolvable,
-                    "resolved": is_resolved,
-                    "position": None,
-                }
-            ]
-        out.append(
-            json.dumps(
-                {
-                    "id": thread.id,
-                    "individual_note": not thread.server.repliable,
-                    "notes": notes,
-                },
-                ensure_ascii=False,
-            )
-        )
-    return "\n".join(out) + "\n"
-
-
-def _set_local(root: Path, thread_id: str, *, state: str, reply: str) -> None:
-    path = store.review_json_path(root, 1234)
-    review = model.loads(path.read_text(encoding="utf-8"))
-    target = next(t for t in review.threads if t.id == thread_id)
-    target.local.state = state
-    target.local.reply = reply
-    store.atomic_write_text(path, model.dumps(review))
-
-
-def _read(root: Path) -> model.Review:
-    return model.loads(store.review_json_path(root, 1234).read_text(encoding="utf-8"))
-
-
-def test_push_posts_reply_and_resolves(pushable, glab):
+def test_push_posts_reply_and_resolves(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
     glab.route(RESOLVE.format(did="a1b2c3d4e5f6"), {"id": "a1b2c3d4e5f6"})
@@ -564,7 +420,7 @@ def test_push_posts_reply_and_resolves(pushable, glab):
     assert target.local.touched_by == "push"
 
 
-def test_push_sends_fenced_body_byte_for_byte(pushable, glab):
+def test_push_sends_fenced_body_byte_for_byte(pushable, glab):  # noqa: F811
     # Review Focus 3. 코드 펜스·표·CRLF 가 섞인 답글이 그대로 가야 한다. 펜스
     # 내부는 실제 CRLF 로 둬 LF 와 섞인 본문이 그대로(변환 없이) 전송되는지도
     # 검증한다 — 리뷰가 "주석이 약속한 것과 리터럴이 다르다" 고 지적한 지점.
@@ -581,7 +437,7 @@ def test_push_sends_fenced_body_byte_for_byte(pushable, glab):
     assert posted["stdin"] == body
 
 
-def test_push_twice_sends_nothing_the_second_time(pushable, glab):
+def test_push_twice_sends_nothing_the_second_time(pushable, glab):  # noqa: F811
     # Review Focus 4 + PRD 의 "중복 전송 0건".
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
@@ -610,7 +466,7 @@ def test_push_twice_sends_nothing_the_second_time(pushable, glab):
     assert len(writes) == 2, "두 번째 push 가 쓰기 요청을 다시 보냈다"
 
 
-def test_push_flushes_json_after_each_thread(pushable, glab, monkeypatch):
+def test_push_flushes_json_after_each_thread(pushable, glab, monkeypatch):  # noqa: F811
     # Important 2 — `glab.fail_at` 로 두 번째 POST 를 "exit 1" 시키면 `_send`
     # 가 그 실패를 잡아 루프를 끝까지 돈다. 그 경로는 루프가 끝난 뒤 한 번만
     # flush 해도 디스크 결과가 바이트 단위로 같아, "스레드마다 flush 한다" 는
@@ -648,7 +504,7 @@ def test_push_flushes_json_after_each_thread(pushable, glab, monkeypatch):
     assert second.local.reply == "두 번째"
 
 
-def test_push_records_second_defence_hash_without_posting(pushable, glab):
+def test_push_records_second_defence_hash_without_posting(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="이미 올라갔다")
     glab.route(
         "GET projects/:fullpath/merge_requests/1234/discussions",
@@ -667,7 +523,7 @@ def test_push_records_second_defence_hash_without_posting(pushable, glab):
     assert target.local.reply == ""
 
 
-def test_push_demotes_state_and_records_error_on_resolve_403(pushable, glab):
+def test_push_demotes_state_and_records_error_on_resolve_403(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
     glab.route(
@@ -688,7 +544,7 @@ def test_push_demotes_state_and_records_error_on_resolve_403(pushable, glab):
     assert target.local.reply == ""
 
 
-def test_push_does_not_retry_resolve_after_demotion(pushable, glab):
+def test_push_does_not_retry_resolve_after_demotion(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
     glab.route(
@@ -708,7 +564,7 @@ def test_push_does_not_retry_resolve_after_demotion(pushable, glab):
     assert len(puts) == 1, "강등된 뒤에도 resolve 를 재시도했다 — 루프가 열려 있다"
 
 
-def test_push_keeps_reply_when_post_fails(pushable, glab):
+def test_push_keeps_reply_when_post_fails(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="보내야 한다")
     glab.route(
         NOTES.format(did="a1b2c3d4e5f6"),
@@ -725,7 +581,7 @@ def test_push_keeps_reply_when_post_fails(pushable, glab):
     assert target.local.push_error["retryable"] is True
 
 
-def test_push_does_not_resolve_when_reply_fails(pushable, glab):
+def test_push_does_not_resolve_when_reply_fails(pushable, glab):  # noqa: F811
     # Important 1 — "done" + reply 는 POST 와 PUT 둘 다를 만든다. POST 가
     # 실패하면 그 스레드는 아직 "done" 이 아니므로 resolve 를 시도하면 안
     # 된다 — 리뷰어가 "답글 없이 닫힌 스레드" 를 보게 된다. resolve 가 성공해
@@ -753,7 +609,7 @@ def test_push_does_not_resolve_when_reply_fails(pushable, glab):
     assert target.local.reply == "확인했습니다"
 
 
-def test_push_refuses_on_a_different_branch(pushable, checkout, glab):
+def test_push_refuses_on_a_different_branch(pushable, checkout, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="보내야 한다")
     checkout("other/branch")
 
@@ -766,7 +622,7 @@ def test_push_refuses_on_a_different_branch(pushable, checkout, glab):
     ]
 
 
-def test_push_stops_on_sync_conflict_without_sending(pushable, glab):
+def test_push_stops_on_sync_conflict_without_sending(pushable, glab):  # noqa: F811
     # md 와 CLI 가 같은 스레드를 다르게 고친 상태를 만든다.
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="json 쪽")
     path = store.review_json_path(pushable, 1234)
@@ -792,7 +648,7 @@ def test_push_stops_on_sync_conflict_without_sending(pushable, glab):
     ]
 
 
-def test_push_resolve_require_without_permission_refuses_before_sending(pushable, glab):
+def test_push_resolve_require_without_permission_refuses_before_sending(pushable, glab):  # noqa: F811
     # Minor 4 — §9 는 `require` 에 권한이 없으면 "push 를 시작하지 않고 exit 1"
     # 이라고 쓴다. sync(mdsync.perform) 보다 앞서 끊어야 글자 그대로 맞는다.
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
@@ -810,7 +666,7 @@ def test_push_resolve_require_without_permission_refuses_before_sending(pushable
     ]
 
 
-def test_push_failed_repull_does_not_override_send_result(pushable, glab, monkeypatch):
+def test_push_failed_repull_does_not_override_send_result(pushable, glab, monkeypatch):  # noqa: F811
     # Minor 6a — repull(§9 5단계) 이 실패해도 전송 결과는 이미 json 에 있다
     # (MUST). `discussions.fetch` 를 두 번째 호출(=repull 의 조회)에서만
     # 실패시켜 push 자신의 사전 판정은 그대로 두고 repull 만 네트워크 실패로
@@ -837,7 +693,7 @@ def test_push_failed_repull_does_not_override_send_result(pushable, glab, monkey
     assert target.local.pushed_hash == push.body_hash("확인했습니다")
 
 
-def test_push_returns_parse_error_without_sending(pushable, glab):
+def test_push_returns_parse_error_without_sending(pushable, glab):  # noqa: F811
     # Minor 6b — review.md 파싱 에러는 exit 2 이고 아무것도 쓰지 않는다
     # (닫히지 않은 코드 펜스가 트리거다, cli.md §5).
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="답글")
@@ -854,7 +710,7 @@ def test_push_returns_parse_error_without_sending(pushable, glab):
     ]
 
 
-def test_push_json_keeps_stdout_as_a_single_json_object(pushable, glab, capsys):
+def test_push_json_keeps_stdout_as_a_single_json_object(pushable, glab, capsys):  # noqa: F811
     # Important 3 — repull(=pull.run) 이 사람용 요약 두 줄을 stdout 에 찍는다.
     # `--json` 일 때 그 줄이 `_report` 의 JSON 객체와 함께 stdout 에 섞이면
     # cli.md §2 의 "stdout 은 순수 JSON 객체 하나" 를 깬다.
@@ -869,7 +725,7 @@ def test_push_json_keeps_stdout_as_a_single_json_object(pushable, glab, capsys):
     assert payload["pushed"]["replies"] == 1
 
 
-def test_dry_run_lists_targets_and_sends_nothing(pushable, glab, capsys):
+def test_dry_run_lists_targets_and_sends_nothing(pushable, glab, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     _set_local(pushable, "7a0b1c2d3e4f", state="replied", reply="개별 노트라 못 보낸다")
 
@@ -886,7 +742,7 @@ def test_dry_run_lists_targets_and_sends_nothing(pushable, glab, capsys):
     ]
 
 
-def test_dry_run_json_is_the_only_thing_on_stdout(pushable, capsys):
+def test_dry_run_json_is_the_only_thing_on_stdout(pushable, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
 
     assert main(["push", "--dry-run", "--json"]) == 0
@@ -897,7 +753,7 @@ def test_dry_run_json_is_the_only_thing_on_stdout(pushable, capsys):
     assert payload["push"]["resolves"] == 1
 
 
-def test_push_json_reports_failures_with_retryable(pushable, glab, capsys):
+def test_push_json_reports_failures_with_retryable(pushable, glab, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(NOTES.format(did="a1b2c3d4e5f6"), {"id": 9001}, status=201)
     glab.route(
@@ -921,14 +777,14 @@ def test_push_json_reports_failures_with_retryable(pushable, glab, capsys):
     ]
 
 
-def test_push_with_nothing_to_send_is_success(pushable, glab, capsys):
+def test_push_with_nothing_to_send_is_success(pushable, glab, capsys):  # noqa: F811
     # Review Focus 5. 빈 결과를 실패로 보고하면 안 된다.
     assert main(["push"]) == 0
 
     assert "보낼 것이 없습니다" in capsys.readouterr().out
 
 
-def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsys):
+def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="replied", reply="확인했습니다")
     path = store.review_json_path(pushable, 1234)
     review = model.loads(path.read_text(encoding="utf-8"))
@@ -949,7 +805,7 @@ def test_push_refuses_merged_mr_without_force(pushable, glab, monkeypatch, capsy
     assert main(["push", "--force"]) == 0
 
 
-def test_resolve_auto_without_permission_is_exit_zero(pushable, glab, capsys):
+def test_resolve_auto_without_permission_is_exit_zero(pushable, glab, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     path = store.review_json_path(pushable, 1234)
     review = model.loads(path.read_text(encoding="utf-8"))
@@ -968,7 +824,7 @@ def test_resolve_auto_without_permission_is_exit_zero(pushable, glab, capsys):
     assert main(["push"]) == 0
 
 
-def test_resolve_require_without_permission_sends_nothing(pushable, glab):
+def test_resolve_require_without_permission_sends_nothing(pushable, glab):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     path = store.review_json_path(pushable, 1234)
     review = model.loads(path.read_text(encoding="utf-8"))
@@ -984,7 +840,7 @@ def test_resolve_require_without_permission_sends_nothing(pushable, glab):
     ]
 
 
-def test_dry_run_on_unopened_mr_shows_preview_without_force(pushable, glab, capsys):
+def test_dry_run_on_unopened_mr_shows_preview_without_force(pushable, glab, capsys):  # noqa: F811
     # dry-run 은 mr_state 확인보다 먼저다 — merged MR 에서도 --force 없이
     # 미리보기를 볼 수 있어야 한다(확인 절차 자체가 전송 전용이므로). 이
     # 스레드는 reply 와 no-resolve-permission skip 을 동시에 가진다 — 한쪽
@@ -1013,7 +869,7 @@ def test_dry_run_on_unopened_mr_shows_preview_without_force(pushable, glab, caps
     ]
 
 
-def test_push_json_payloads_validate_against_the_contract(pushable, glab, capsys):
+def test_push_json_payloads_validate_against_the_contract(pushable, glab, capsys):  # noqa: F811
     # cli.md §9 의 페이로드 모양. 키가 바뀌면 에디터와 AI 가 조용히 깨진다.
     assert main(["push", "--json"]) == 0
     payload = json.loads(capsys.readouterr().out)
