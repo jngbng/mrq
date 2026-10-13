@@ -29,12 +29,44 @@ md 에 같은 답글이 인용과 reply 양쪽에 두 번 보이기 때문이다
 **resolve 는 `resolve_discussion` 으로 draft 에 묶는다.** 별도 `PUT discussions`
 를 보내지 않는다.
 
-**`--publish` 는 mrq 가 만들지 않은 draft 가 있으면 확인을 요구한다.**
+**`--publish` 는 mrq 가 만들지 않은(foreign) draft 가 있으면 확인을 요구한다.**
+**foreign 판정은 `discussion_id` 만 본다** — 이 리뷰의 스레드 id 와 일치하면
+ours, 아니면(`discussion_id` 가 없는 경우를 포함) foreign 이다. body(note) 비교는
+여기 쓰지 않는다 — draft 를 만든 뒤 사용자가 md 에서 답글을 고치면 body 가
+달라지는데, 그걸로 ours/foreign 을 가르면 **자기 자신의 draft** 를 foreign 으로
+잘못 보고 불필요한 확인을 요구하게 된다.
+
+이 판정의 받아들인 결과: GitLab UI 에서 **mrq 가 추적하는 스레드 위에** 만든
+draft 는 discussion_id 가 일치하므로 ours 로 분류되어 확인 없이 함께 발행되고,
+그 본문이 그 스레드의 `local.reply` 를 비울 수 있다. 괜찮다 — `bulk_publish` 가
+선택적 발행을 지원하지 않으므로 그 draft 는 ours 로 분류하든 안 하든 어차피
+같이 나가고, 그것은 **같은 스레드의 같은 리뷰 라운드**이지 남의 작업이 아니다.
+확인이 막아야 하는 것은 "모르는 별개의 작업이 같이 나가는 것" 이고, 이 경우는
+그게 아니다.
 
 발행 시점의 정리도 조건부다 — `local.reply` 는 **발행된 draft 본문과 현재 값이
 같을 때만** 비운다. draft 를 만든 뒤 md 에서 답글을 고친 사용자의 수정을 지우지
 않기 위해서다. `pushed_hash` 는 발행된 본문의 해시로 기록하므로, 고친 답글은
 해시가 달라 다음 `push` 에서 정상 전송된다.
+
+**발행 실패는 스레드 하나의 일이 아니다.** `bulk_publish` 는 선택적 발행이 없는
+MR 전체 단위 호출이므로, 실패하면 이번에 발행하려던 내(ours) draft 전부의
+스레드에 `push_error{op: "publish"}` 를 기록한다 — 임의의 스레드 하나에
+떠넘기지 않는다.
+
+**`pushed.replies`/`pushed.resolves` 는 실제로 나간 것만 센다.** draft 생성
+단독은 전송이 아니므로 둘 다 `0` 이다. `--publish` 가 수행되면 발행된 draft 중
+**ours** 의 수(및 그중 `resolve_discussion` 을 담은 것의 수)를 센다 — 전송
+여부와 무관한 `push.plan` 의 판정(일반 경로의 미리보기용)과 섞이지 않는다.
+
+**`--publish` 단독 뒤의 재pull 은 md 를 다시 그리지 않는다.** `--publish` 단독은
+sync 를 건너뛰므로, 로컬 `review.md` 에 아직 `sync`되지 않은 사용자의 수정이
+남아 있을 수 있다. 재pull 이 md 를 덮어쓰면 그 수정이 흔적 없이 사라진다 —
+이 결정이 막으려는 것과 정확히 같은 손실이다. 대신 md 를 그대로 둔다. 발행된
+draft 의 `touched_by` 는 `"push"` 이므로(`data-model.md` §5.2) 다음 `sync`는
+이것을 충돌이 아니라 "md 적용" 으로 판정해 사용자의 수정을 받아들이고,
+`pushed_hash` 는 발행된(옛) 본문의 해시라 새 본문과 달라 그 뒤의 `push` 가
+정상 전송한다.
 
 ## 근거
 
@@ -66,3 +98,10 @@ resolve 만 즉시 반영하면 "발행하지 않았는데 스레드가 닫혀 �
   지워진 draft 와 동기를 맞출 방법이 없어 기각했다
 - `--publish` 가 확인을 요구하는 경우가 생긴다. 비대화형 사용에서는 `--force` 가
   필요하다
+- 중복 방어의 키는 `(discussion_id, body)` 뿐이고 `resolve_discussion` 은 보지
+  않는다. 답글 본문은 그대로인데 새로 resolve 가 필요해진 스레드는 이미 있는
+  (resolve 없는) draft 에 가로막혀 조용히 생략된다 — draft 수정이 범위 밖이라
+  고칠 수 없고, 이름을 대고 경고하는 것이 할 수 있는 전부다
+- foreign 판정을 `discussion_id` 로 좁히면서, UI 에서 추적 중인 스레드에 만든
+  draft 는 ours 로 분류되어 확인 없이 발행되고 그 본문이 `local.reply` 를 비울
+  수 있게 됐다. 위 "받아들인 결과" 가 그 비용이 괜찮은 이유다

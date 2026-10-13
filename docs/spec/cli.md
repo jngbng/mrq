@@ -594,7 +594,10 @@ f6e5d4c3  reply(88B)              src/api/legacy.py:1    `stale`
 
 `capabilities.draft_notes == false`면 `--draft`를 **명확한 메시지와 함께 거부해야
 한다**(MUST). 조용히 일반 notes 경로로 빠지면 안 된다(MUST NOT) — 사용자는 draft로
-갔다고 믿는다.
+갔다고 믿는다. 이 확인은 `--resolve require`의 권한 확인과 **같은 자리**(sync·락보다
+앞)에서 한다 — `capabilities`도 sync가 건드리는 필드가 아니므로 디스크 값을 그대로
+읽어도 되고, "push를 시작하지 않고 exit 1"이 글자 그대로 맞으려면 락 전에 끊어야
+한다.
 
 **draft 생성은 전송이 아니다.** 따라서 생성 시점에 `pushed_hash`를 기록하지 않고
 `local.reply`도 비우지 않는다(MUST NOT) — 발행하지 않으면 그 답글은 GitLab의 내
@@ -613,13 +616,33 @@ draft 안에만 있고, 로컬에서 지우면 사용자가 자기 글을 잃는
   `local.reply`는 그 본문과 **현재 값이 같을 때만** 비운다(MUST) — draft를 만든 뒤
   사용자가 md에서 답글을 고쳤다면 비우는 것이 그 수정을 지운다. 다르면 해시만
   기록하고 답글은 남긴다. 해시가 다르므로 다음 `push`가 새 본문을 정상 전송한다
-- `--publish` 단독은 1·2단계(`sync`·스냅샷)를 생략한다. 발행할 draft는 이미
-  있고 대상 판정이 필요 없다. 4단계의 json 갱신과 5단계의 재pull은 그대로 한다
+- **`--publish` 단독은 1·2단계(`sync`·스냅샷)를 생략한다.** 발행할 draft는 이미
+  있고 대상 판정이 필요 없다. 발행은 서버에 이미 있는 draft를 내보내는 일이라
+  로컬 `review.md`와 무관하다 — `review.md`에 파싱 에러나 충돌이 있어도 이미
+  사용자 손을 떠난 draft를 발행하지 못하게 막으면 안 된다. 4단계의 json 갱신과
+  5단계의 재pull은 그대로 한다
+- **5단계의 재pull은 `--publish` 단독일 때 md를 다시 그리지 않는다**(MUST,
+  `pull --no-render`와 같은 경로). 1·2단계를 생략했으므로 로컬 `review.md`에
+  아직 `sync`되지 않은 사용자의 수정이 남아 있을 수 있다 — md를 덮어쓰면 그
+  수정이 흔적 없이 사라진다(결정 0012가 막으려는 것과 같은 손실). md를 그대로
+  두면 다음 `sync`가 그 수정을 받아들인다 — 발행된 draft의 `touched_by`는
+  `"push"`이므로(`data-model.md` §5.2) 그다음 `sync`는 이것을 충돌이 아니라
+  "md 적용"으로 판정하고, `pushed_hash`는 발행된(옛) 본문의 해시라 사용자의 새
+  본문과 달라 다음 `push`가 그 새 본문을 정상 전송한다
 - draft 생성 실패와 발행 실패는 `push_error`에 `op: "draft"` / `op: "publish"`로
   기록하고 **exit 4**다. 일반 경로의 부분 실패와 같은 취급이다
+- **발행 실패는 스레드 하나의 일이 아니다**(MUST) — `bulk_publish`는 선택적
+  발행이 없는 MR 전체 단위 호출이므로, 실패하면 이번에 발행하려던 **내 draft
+  전부**의 스레드에 `push_error{op: "publish"}`를 기록한다. 임의로 스레드
+  하나에만 떠넘기지 않는다
 - 1단계가 **중복 방어 전부**다(MUST). `pushed_hash`가 아직 없으므로 두 겹이 아니다.
   그래서 이 조회가 실패하면 draft를 만들지 않는다(MUST) — 방어 없이 만들면
   재실행이 draft를 복제하고, 사용자는 GitLab UI에서 그것을 손으로 지워야 한다
+- 중복 방어의 키는 `(discussion_id, body)`뿐이다 — `resolve_discussion`은 보지
+  않는다. 그래서 답글 본문은 그대로인데 새로 resolve가 필요해진 스레드는 이미
+  있는(resolve 없는) draft에 가로막혀 조용히 생략될 수 있다. draft 수정은
+  범위 밖이므로(아래) 고치지 못하고, 스레드를 대고 경고한다("GitLab UI에서
+  지우고 다시 만드세요")
 - resolve는 `resolve_discussion`으로 draft에 묶는다. 별도 `PUT discussions`를
   보내지 않는다(MUST NOT). 권한이 없으면 `false`로 보내고 경고한다 — `--resolve`
   표의 `auto` 행과 같은 판정이다
@@ -627,13 +650,41 @@ draft 안에만 있고, 로컬에서 지우면 사용자가 자기 글을 잃는
   모두 허용한다
 - draft 수정·삭제(`PUT`/`DELETE draft_notes`)는 범위 밖이다. 잘못 만든 draft는
   GitLab UI에서 지운다
+- **`pushed.replies`/`pushed.resolves`는 실제로 나간 것만 센다**(MUST). draft
+  생성 단독은 전송이 아니므로(결정 0012) 둘 다 `0`이고, 사람이 읽는 줄은 대신
+  만들어진(또는 이미 있던) draft 수를 말한다. `--publish`가 수행되면 그 수는
+  **발행된 draft 중 "내" 것**(아래 foreign 판정 참조)의 수이고, `resolves`는
+  그중 `resolve_discussion`을 담고 있던 것의 수다 — `push.plan`의 판정(일반
+  경로의 미리보기용)과 더 이상 섞이지 않는다
+- **`--dry-run --draft`**는 통상의 미리보기 행 각각을 draft로 묶일 것으로
+  표시한다("draft reply(…)" 등) — 그대로 두면 "보냈다"로 읽혀 draft는 전송이
+  아니라는 결정 0012와 어긋난다. **`--dry-run --publish`**(단독)는 통상의
+  미리보기를 쓰지 않는다 — 그 경로의 `sheet`는 스냅샷 없이 만들어져
+  `server-changed`를 보여줄 수 없고, 보여줄 것은 애초에 "이번에 보낼 것"이
+  아니라 "이미 서버에 있는 draft"다. 대신 `GET draft_notes`로 실제 발행
+  대상을 조회해(쓰지 않는다) 목록과 ours/foreign 수를 보여준다
 
 #### `bulk_publish`는 내 draft 전부를 발행한다
 
 `bulk_publish`에는 "이것만 발행" 파라미터가 없다. 따라서 사용자가 GitLab UI에서
 쓰던 미완성 draft까지 함께 공개된다. `--publish`는 1단계 목록에 **mrq가 만들지
-않은 draft**(어느 스레드의 `local.reply`와도 맞지 않는 것)가 있으면 그 수를 보여주고
-**확인을 요구해야 한다**(MUST). `--force`로 진행한다.
+않은(foreign) draft**가 있으면 그 수를 보여주고 **확인을 요구해야 한다**(MUST).
+`--force`로 진행한다.
+
+**foreign 판정은 `discussion_id`만 본다** — 그 값이 이 리뷰의 어느 스레드 id와도
+같지 않으면(UI에서 새로 시작한 미완성 리뷰처럼 `discussion_id`가 없는 경우를
+포함) foreign이고, 같으면 ours다. body(note) 비교는 여기 쓰지 않는다 — 발행
+시점에 `local.reply`를 비울지 정하는 데만 쓴다(위 4단계). body로 판정하면 draft를
+만든 뒤 사용자가 md에서 답글을 고친 **자기 자신의 draft**를 foreign으로 잘못 보고
+불필요한 확인을 요구한다.
+
+받아들이는 결과: GitLab UI에서 **mrq가 추적하는 스레드 위에** 만들어진 draft는
+discussion_id가 일치하므로 ours로 분류되어 확인 없이 함께 발행되고, 그 본문이
+그 스레드의 `local.reply`를 비울 수 있다. 이것은 의도한 결과다 — `bulk_publish`가
+선택적 발행을 지원하지 않으므로 그 draft는 어차피 같이 나간다(ours로 분류하든
+안 하든 결과는 같다), 그리고 그것은 **같은 스레드의 같은 리뷰 라운드**이지 전혀
+남의 작업이 아니다. 확인이 막아야 하는 것은 "내가 모르는 별개의 작업이 같이
+나가는 것"(foreign)이고, 이 경우는 그게 아니다.
 
 `mr_state != "opened"`에 확인을 요구하는 것과 같은 이유다 — 바깥으로 나가고
 되돌릴 수 없다.

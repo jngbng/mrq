@@ -1,6 +1,6 @@
 import json
 
-from mrq import model, store
+from mrq import model, push, store
 from mrq.__main__ import main
 from tests.pushkit import DRAFTS, PUBLISH, pushable, read, set_local  # noqa: F401
 
@@ -279,3 +279,180 @@ def test_publish_reports_published_counts_not_plan_counts(pushable, glab, capsys
 
     payload = json.loads(capsys.readouterr().out)
     assert payload["pushed"] == {"replies": 2, "resolves": 1}
+
+
+def test_publish_preserves_unsynced_md_edit_for_the_next_sync(pushable, glab):  # noqa: F811
+    # Important 1 — draft 는 R1 을 묶고, 사용자가 아직 sync 하지 않은 채로 md
+    # 를 R2 로 고친 뒤 --publish 를 돌리면 R1 이 발행되고 로컬 reply 는
+    # 비워진다. 그래도 md 의 R2 는 사라지면 안 된다(결정 0012) — publish_only
+    # 뒤의 재pull 은 md 를 다시 그리지 않는다(ruling 1). 다음 sync 가 R2 를
+    # 흡수해야 한다(충돌도 조용한 소실도 아니다).
+    r1, r2 = "본문-원본-R1", "본문-수정-R2"
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply=r1)
+    glab.route(f"GET {DRAFTS}", [])
+    glab.route(f"POST {DRAFTS}", {"id": 5}, status=201)
+
+    assert main(["push", "--draft"]) == 0
+
+    md_path = store.review_md_path(pushable, 1234)
+    text = md_path.read_text(encoding="utf-8")
+    assert r1 in text
+    md_path.write_text(text.replace(r1, r2), encoding="utf-8")
+
+    glab.route(
+        f"GET {DRAFTS}",
+        [{"id": 5, "discussion_id": "a1b2c3d4e5f6", "note": r1, "resolve_discussion": True}],
+    )
+    glab.route(f"POST {PUBLISH}", {})
+
+    assert main(["push", "--publish", "--force"]) == 0
+
+    # md 는 재pull 에서도 다시 그려지지 않는다 — 사용자의 R2 가 그대로 있다.
+    after_publish = md_path.read_text(encoding="utf-8")
+    assert r2 in after_publish
+    assert r1 not in after_publish
+
+    published = read(pushable)
+    target = next(t for t in published.threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.reply == ""
+    assert target.local.pushed_hash == push.body_hash(r1)
+
+    # 다음 sync 가 R2 를 받아들인다 — touched_by="push" 이므로 conflict.classify
+    # 가 "apply-md" 로 판정한다(data-model.md §5.2).
+    assert main(["sync"]) == 0
+    synced = read(pushable)
+    final = next(t for t in synced.threads if t.id == "a1b2c3d4e5f6")
+    assert final.local.reply == r2
+
+
+def test_create_draft_failure_records_push_error(pushable, glab):  # noqa: F811
+    # §9 의 유일한 MUST 중 테스트가 없던 것 — draft POST 실패는 op:"draft" 로
+    # push_error 를 남기고 exit 4 다.
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(f"GET {DRAFTS}", [])
+    glab.route(f"POST {DRAFTS}", raw='{"message":"502 Bad Gateway"}', status=502)
+
+    assert main(["push", "--draft"]) == 4
+
+    target = next(t for t in read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.push_error["op"] == "draft"
+    assert target.local.push_error["retryable"] is True
+    # 실패했으니 답글은 그대로 남아 재실행으로 복구된다.
+    assert target.local.reply == "확인했습니다"
+    assert target.local.pushed_hash is None
+
+
+def test_create_draft_clears_stale_push_error_on_retry_success(pushable, glab):  # noqa: F811
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.local.push_error = {
+        "op": "draft",
+        "status": 502,
+        "reason": "unknown",
+        "retryable": True,
+        "at": "2026-10-13T10:00:00+09:00",
+        "message": "502 Bad Gateway",
+    }
+    store.atomic_write_text(path, model.dumps(review))
+    glab.route(f"GET {DRAFTS}", [])
+    glab.route(f"POST {DRAFTS}", {"id": 5}, status=201)
+
+    assert main(["push", "--draft"]) == 0
+
+    target = next(t for t in read(pushable).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.push_error is None
+
+
+def test_create_draft_warns_when_existing_draft_lacks_requested_resolve(
+    pushable,  # noqa: F811
+    glab,
+    capsys,
+):
+    # Minor — dedup 키는 (discussion_id, body) 뿐이라 resolve_discussion 차이는
+    # 못 잡는다. 답글은 그대로인데 새로 resolve 가 필요해진 스레드가 이미
+    # resolve 없는 draft 에 가로막히면 조용히 생략되므로 이름을 대고 경고한다.
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    glab.route(
+        f"GET {DRAFTS}",
+        [
+            {
+                "id": 5,
+                "discussion_id": "a1b2c3d4e5f6",
+                "note": "확인했습니다",
+                "resolve_discussion": False,
+            }
+        ],
+    )
+
+    assert main(["push", "--draft"]) == 0
+
+    err = capsys.readouterr().err
+    assert "a1b2c3d4" in err
+    assert "resolve" in err
+    assert not [
+        c
+        for c in glab.calls()
+        if "draft_notes" in c["argv"][1]
+        and "--method" in c["argv"]
+        and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+
+
+def test_dry_run_draft_labels_rows_as_draft(pushable, glab, capsys):  # noqa: F811
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+
+    assert main(["push", "--dry-run", "--draft"]) == 0
+
+    out = capsys.readouterr().out
+    assert "draft reply" in out
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
+def test_dry_run_draft_json_marks_mode(pushable, glab, capsys):  # noqa: F811
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+
+    assert main(["push", "--dry-run", "--draft", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["mode"] == "draft"
+
+
+def test_dry_run_publish_lists_pending_drafts(pushable, glab, capsys):  # noqa: F811
+    # ruling — publish_only 의 sheet 는 snapshot 없이 만들어져 server-changed
+    # 를 보여줄 수 없다. --dry-run --publish 는 그 sheet 대신 실제 발행 대상인
+    # draft 목록을 조회해 보여준다.
+    glab.route(
+        f"GET {DRAFTS}",
+        [
+            {"id": 5, "discussion_id": "a1b2c3d4e5f6", "note": "A", "resolve_discussion": True},
+            {"id": 7, "discussion_id": None, "note": "UI 미완성", "resolve_discussion": False},
+        ],
+    )
+
+    assert main(["push", "--dry-run", "--publish"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a1b2c3d4" in out
+    assert "mrq 가 만들지 않음" in out
+    assert not [c for c in glab.calls() if "bulk_publish" in c["argv"][1]]
+
+
+def test_dry_run_publish_json_lists_ours_and_foreign(pushable, glab, capsys):  # noqa: F811
+    glab.route(
+        f"GET {DRAFTS}",
+        [
+            {"id": 5, "discussion_id": "a1b2c3d4e5f6", "note": "A", "resolve_discussion": True},
+            {"id": 7, "discussion_id": None, "note": "UI 미완성", "resolve_discussion": False},
+        ],
+    )
+
+    assert main(["push", "--dry-run", "--publish", "--json"]) == 0
+
+    payload = json.loads(capsys.readouterr().out)
+    assert payload["publish"] == {"drafts": 2, "ours": 1, "foreign": 1}

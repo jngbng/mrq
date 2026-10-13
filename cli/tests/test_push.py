@@ -13,8 +13,6 @@ from tests.pushkit import review as _review
 from tests.pushkit import set_local as _set_local
 from tests.pushkit import snapshot_ndjson as _snapshot_ndjson
 
-SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
-
 
 def _ready(review: model.Review, thread_id: str, *, state: str, reply: str = "") -> model.Thread:
     thread = next(t for t in review.threads if t.id == thread_id)

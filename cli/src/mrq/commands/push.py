@@ -21,16 +21,21 @@ def run(args) -> int:
     context = store.open_review(on_branch_change="fail")
     root, iid, path = context.root, context.iid, context.path
 
-    if args.resolve == "require":
-        # sync·전송보다 앞서 확인한다(MUST) — §9 는 "push 를 시작하지 않고
-        # exit 1" 이라고 쓴다. 락을 잡거나 review.md 를 json 에 반영하기
-        # 전에 끊어야 그 말이 글자 그대로 맞는다. `me.can_resolve` 는 sync
-        # 가 건드리는 필드가 아니므로 디스크의 값을 그대로 읽어도 된다.
-        me = model.loads(path.read_text(encoding="utf-8")).me
-        if not me.can_resolve:
+    if args.resolve == "require" or args.draft:
+        # 둘 다 "push 를 시작하지 않고 exit 1" 이다(§9) — sync·락보다 앞서
+        # 끊어야 그 말이 글자 그대로 맞는다. `me.can_resolve` 와
+        # `capabilities` 는 sync 가 건드리는 필드가 아니므로 디스크의 값을
+        # 그대로 읽어도 된다.
+        pre = model.loads(path.read_text(encoding="utf-8"))
+        if args.resolve == "require" and not pre.me.can_resolve:
             raise UsageError(
                 "resolve 권한이 없습니다 (--resolve require). 아무것도 전송하지 않았습니다. "
                 "`--resolve auto` 로 답글만 보낼 수 있습니다."
+            )
+        if args.draft and not pre.capabilities.draft_notes:
+            raise UsageError(
+                "이 GitLab 은 draft_notes API 를 지원하지 않습니다 (--draft 를 쓸 수 "
+                "없습니다). 일반 전송은 `mrq push` 입니다."
             )
 
     # `--publish` 단독은 sync·스냅샷 **둘 다** 생략한다(cli.md §9 `--draft`) —
@@ -58,7 +63,9 @@ def run(args) -> int:
             sheet = push.plan(review, snapshot=snapshot, resolve=args.resolve, force=args.force)
 
         if args.dry_run:
-            return _report_dry_run(review, sheet, json_mode=args.json)
+            if publish_only:
+                return _report_dry_run_publish(review, json_mode=args.json)
+            return _report_dry_run(review, sheet, json_mode=args.json, draft_mode=args.draft)
         if review.mr_state != "opened":
             prompt.confirm(
                 f"MR 이 {review.mr_state} 상태입니다. 보통은 브랜치를 바꾼 뒤 "
@@ -66,17 +73,16 @@ def run(args) -> int:
                 force=args.force,
             )
         if args.draft or args.publish:
-            if args.draft and not review.capabilities.draft_notes:
-                raise UsageError(
-                    "이 GitLab 은 draft_notes API 를 지원하지 않습니다 (--draft 를 쓸 수 "
-                    "없습니다). 일반 전송은 `mrq push` 입니다."
-                )
             failures, pushed = _run_draft(root, review, sheet, args, json_mode=args.json)
         else:
             failures = _send(root, review, sheet)
             pushed = None
 
-    _repull(iid, json_mode=args.json)
+    # `publish_only` 는 md 를 다시 그리지 않는다(ruling 1) — sync 를 건너뛰었으니
+    # md 에 아직 반영되지 않은 사용자의 수정이 있을 수 있다. 재pull 이 md 를
+    # 덮어쓰면 그 수정이 흔적 없이 사라진다 — 결정 0012 가 막으려는 것과 같은
+    # 손실이다. md 를 그대로 두면 다음 `sync`가 그 수정을 받아들인다.
+    _repull(iid, json_mode=args.json, no_render=publish_only)
     return _report(sheet, failures, json_mode=args.json, pushed=pushed)
 
 
@@ -85,31 +91,38 @@ def run(args) -> int:
 _SKIP_TEXT = {reason: reason for reason in push.SKIP_REASONS}
 
 
-def _report_dry_run(review: model.Review, sheet: push.Plan, *, json_mode: bool) -> int:
+def _report_dry_run(
+    review: model.Review, sheet: push.Plan, *, json_mode: bool, draft_mode: bool = False
+) -> int:
+    """`--dry-run`. `draft_mode`(=`--draft`)면 각 행을 draft 로 묶일 것으로
+    표시한다 — 그대로 두면 "보냈다" 로 읽혀 draft 는 전송이 아니라는 결정
+    0012 와 어긋난다. `--publish` 단독의 미리보기는 `_report_dry_run_publish`
+    가 따로 맡는다(그 경로는 `sheet` 가 스냅샷 없이 만들어져 이 함수가 보여줄
+    수 있는 것과 의미가 다르다).
+    """
     if json_mode:
-        json.dump(
-            {
-                "iid": review.iid,
-                "push": {
-                    "replies": sheet.replies,
-                    "resolves": sheet.resolves,
-                    "skip": sheet.skip,
-                },
-                "decisions": [
-                    {
-                        "thread": d.thread,
-                        "reply": bool(d.reply),
-                        "bytes": len(d.reply.encode()),
-                        "resolve": d.resolve,
-                        "skip": d.skip,
-                    }
-                    for d in sheet.decisions
-                ],
-                "warnings": sheet.warnings,
+        payload = {
+            "iid": review.iid,
+            "push": {
+                "replies": sheet.replies,
+                "resolves": sheet.resolves,
+                "skip": sheet.skip,
             },
-            sys.stdout,
-            ensure_ascii=False,
-        )
+            "decisions": [
+                {
+                    "thread": d.thread,
+                    "reply": bool(d.reply),
+                    "bytes": len(d.reply.encode()),
+                    "resolve": d.resolve,
+                    "skip": d.skip,
+                }
+                for d in sheet.decisions
+            ],
+            "warnings": sheet.warnings,
+        }
+        if draft_mode:
+            payload["mode"] = "draft"
+        json.dump(payload, sys.stdout, ensure_ascii=False)
         sys.stdout.write("\n")
         return 0
 
@@ -135,12 +148,59 @@ def _report_dry_run(review: model.Review, sheet: push.Plan, *, json_mode: bool) 
             print(f"{decision.thread[:8]}  skip  {_SKIP_TEXT[decision.skip]:<16}  {where}")
             continue
         label = " + ".join(ops)
+        if draft_mode:
+            label = f"draft {label}"
         if decision.skip:
             # 한쪽은 보내지만 다른 쪽이 막혔다 — 그 사실을 같은 줄에 덧붙인다.
             label += f"  (skip {_SKIP_TEXT[decision.skip]})"
         print(f"{decision.thread[:8]}  {label:<24}  {where}")
     if not sheet.decisions:
-        print("보낼 것이 없습니다.")
+        print("만들 draft 가 없습니다." if draft_mode else "보낼 것이 없습니다.")
+    return 0
+
+
+def _report_dry_run_publish(review: model.Review, *, json_mode: bool) -> int:
+    """`--dry-run --publish` 단독. 실제로 발행될 draft 목록을 보여준다.
+
+    `publish_only` 경로의 `sheet` 는 snapshot 없이 만들어져 `server-changed`
+    를 보여줄 수 없다 — 그 사전 판정 자체가 의미 없다(발행은 서버의 draft 를
+    그대로 내보내는 일이다). 그래서 `sheet` 대신 `GET draft_notes` 로 실제
+    발행 대상을 조회해 보여준다. 조회만 하고 쓰지 않는다 — `--dry-run` 이다.
+    """
+    drafts = transport.list_drafts(review.iid)
+    ours = [d for d in drafts if _ours(review, d)]
+    foreign = [d for d in drafts if not _ours(review, d)]
+    if json_mode:
+        json.dump(
+            {
+                "iid": review.iid,
+                "publish": {"drafts": len(drafts), "ours": len(ours), "foreign": len(foreign)},
+                "decisions": [
+                    {
+                        "thread": d.get("discussion_id"),
+                        "resolve": bool(d.get("resolve_discussion")),
+                        "ours": _ours(review, d),
+                    }
+                    for d in drafts
+                ],
+            },
+            sys.stdout,
+            ensure_ascii=False,
+        )
+        sys.stdout.write("\n")
+        return 0
+
+    if not drafts:
+        print("발행할 draft 가 없습니다.")
+        return 0
+    for draft in drafts:
+        thread_id = draft.get("discussion_id")
+        label = thread_id[:8] if thread_id else "(foreign)"
+        tag = "" if _ours(review, draft) else "  (mrq 가 만들지 않음)"
+        resolve_tag = " + resolve" if draft.get("resolve_discussion") else ""
+        print(f"{label}  draft{resolve_tag}{tag}")
+    if foreign:
+        print(f"mrq 가 만들지 않은 draft {len(foreign)}건이 함께 발행됩니다.")
     return 0
 
 
@@ -198,9 +258,19 @@ def _send(root, review: model.Review, sheet: push.Plan) -> list[dict]:
     return failures
 
 
-def _mark_sent(thread: model.Thread, digest: str) -> None:
+def _mark_sent(thread: model.Thread, digest: str, *, clear_reply: bool = True) -> None:
+    """성공한 전송이 쓰는 필드 — `_send`(일반 전송)와 `_publish`(발행) 둘 다
+    이 함수 하나를 거친다. "무엇을 쓰는가" 의 정의가 두 곳으로 갈라지면
+    한쪽만 고치고 잊는 사고가 난다.
+
+    `clear_reply=False` 는 결정 0012 전용이다 — 발행된 draft 본문이 현재
+    `local.reply` 와 다르면(사용자가 draft 생성 뒤 md 에서 고쳤다) 비우지
+    않는다. `pushed_hash` 는 그래도 **발행된 본문**의 해시로 기록해, 고친
+    답글은 해시가 달라 다음 `push` 가 정상 전송하게 한다.
+    """
     thread.local.pushed_hash = digest
-    thread.local.reply = ""
+    if clear_reply:
+        thread.local.reply = ""
     thread.local.push_error = None
     thread.local.touched_by = "push"
     thread.local.touched_at = surface.now()
@@ -241,8 +311,7 @@ def _run_draft(
     failures: list[dict] = []
     pushed = {"replies": 0, "resolves": 0}
     if args.draft:
-        _created, create_failures = _create_drafts(root, review, sheet, drafts, json_mode=json_mode)
-        failures += create_failures
+        failures += _create_drafts(root, review, sheet, drafts, json_mode=json_mode)
     if args.publish:
         if args.draft:
             # 방금 만든 draft 는 위 조회 결과에 없다 — 발행 뒤 pushed_hash
@@ -269,24 +338,38 @@ def _ours(review: model.Review, draft: dict) -> bool:
 
 def _create_drafts(
     root, review: model.Review, sheet: push.Plan, drafts: list[dict], *, json_mode: bool
-) -> tuple[int, list[dict]]:
+) -> list[dict]:
     """답글과 resolve 를 draft 하나로 묶는다. resolve 는 `resolve_discussion`
     에 실어 보내고 별도 `PUT discussions` 는 보내지 않는다(MUST NOT).
 
-    만든 개수를 돌려준다 — `pushed.replies`에는 넣지 않는다(결정 0012, ruling
-    4). draft 생성은 전송이 아니므로 이 수는 사람이 읽는 줄에만 쓴다.
+    중복 방어 키는 `(discussion_id, body)` 다 — `resolve_discussion` 은 보지
+    않는다. 그래서 답글 본문은 그대로인데 새로 resolve 가 필요해진 스레드는
+    이미 있는 draft(resolve 없음)에 가로막혀 조용히 생략된다. draft 수정은
+    범위 밖이므로(결정 0012) 고칠 수 없다 — 대신 이름을 대고 경고한다.
     """
-    existing = {(d.get("discussion_id"), (d.get("note") or "").strip()) for d in drafts}
+    existing = {
+        (d.get("discussion_id"), (d.get("note") or "").strip()): bool(d.get("resolve_discussion"))
+        for d in drafts
+    }
     by_id = {t.id: t for t in review.threads}
     failures: list[dict] = []
+    attempted = 0
     created = 0
     for decision in sheet.targets():
         if not decision.reply and not decision.resolve:
             continue
+        attempted += 1
         thread = by_id[decision.thread]
         body = decision.reply or thread.local.reply
-        if (thread.id, body.strip()) in existing:
+        key = (thread.id, body.strip())
+        if key in existing:
             # 1단계의 중복 방어. 이미 같은 쌍의 draft 가 있다 — 조용히 생략한다.
+            if decision.resolve and not existing[key]:
+                print(
+                    f"⚠ {thread.id[:8]} 이미 있는 draft 는 resolve 를 담고 있지 않습니다 — "
+                    "GitLab UI 에서 지우고 다시 만드세요.",
+                    file=sys.stderr,
+                )
             continue
         try:
             transport.create_draft(review.iid, thread.id, body, resolve=decision.resolve)
@@ -305,9 +388,14 @@ def _create_drafts(
                 print(f"draft {thread.id[:8]}{' (+resolve)' if decision.resolve else ''}")
         # 스레드 하나가 끝날 때마다 json 을 flush 한다(MUST, §9 4c 와 같다).
         store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
-    if created == 0 and not failures and not json_mode:
-        print("만들 draft 가 없습니다.")
-    return created, failures
+    if not json_mode and created == 0 and not failures:
+        if attempted == 0:
+            print("만들 draft 가 없습니다.")
+        else:
+            # 대상은 있었지만 전부 1단계 중복 방어에 걸렸다 — "만들 게
+            # 없다" 가 아니라 "이미 있다" 다. 서로 다른 신호다.
+            print("이미 같은 draft 가 있습니다.")
+    return failures
 
 
 def _publish(
@@ -346,21 +434,22 @@ def _publish(
 
     # 발행된 본문의 해시를 기록하고, **현재 값이 그 본문과 같을 때만** 비운다
     # (결정 0012) — draft 를 만든 뒤 md 에서 고친 답글을 지우면 그 수정이
-    # 사라진다.
+    # 사라진다. "무엇을 쓰는가" 의 정의는 `_mark_sent` 하나뿐이다 — 여기서
+    # 같은 필드를 다시 나열하면 두 정의가 갈라질 수 있다.
     for draft in drafts:
         thread = next((t for t in review.threads if t.id == draft.get("discussion_id")), None)
         if thread is None:
             continue
         note = draft.get("note") or ""
-        thread.local.pushed_hash = push.body_hash(note)
-        if thread.local.reply.strip() == note.strip():
-            thread.local.reply = ""
-        thread.local.push_error = None
-        thread.local.touched_by = "push"
-        thread.local.touched_at = surface.now()
+        _mark_sent(
+            thread, push.body_hash(note), clear_reply=thread.local.reply.strip() == note.strip()
+        )
     store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
     if not json_mode:
-        print(f"published: draft {len(drafts)}건")
+        # 사람이 읽는 줄은 전체 수와 foreign 수를 **같이** 보여준다 — payload
+        # 의 `pushed.replies`(= `len(ours)`)와 다른 수(= `len(drafts)`)를
+        # 말없이 따로 찍으면 둘이 서로 다른 답을 하는 것처럼 보인다.
+        print(f"published: {len(drafts)}건 (mrq 가 만들지 않은 {len(foreign)}건 포함)")
     # `pushed.replies`/`resolves`는 발행된 "우리" draft 수만 센다(ruling 4) —
     # bulk_publish 가 함께 내보낸 foreign draft 는 우리가 보낸 것이 아니다.
     pushed = {
@@ -370,7 +459,7 @@ def _publish(
     return pushed, []
 
 
-def _repull(iid: int, *, json_mode: bool) -> None:
+def _repull(iid: int, *, json_mode: bool, no_render: bool = False) -> None:
     """서버 스냅샷을 다시 받고 md 를 한 번 그린다 (§9 5단계).
 
     락 밖에서 부른다 — `pull` 이 자기 락을 잡는다. 실패해도 종료 코드는 전송
@@ -382,8 +471,13 @@ def _repull(iid: int, *, json_mode: bool) -> None:
     두 조각이 되어 `cli.md` §2 의 "stdout 은 순수 JSON 객체 하나" MUST 를
     깬다. `pull.run` 자신의 계약(사람 모드에서는 stdout 요약)은 바꾸지 않고,
     여기서만 그 출력을 stderr 로 돌린다 — 요약은 사라지지 않고 경로만 바뀐다.
+
+    `no_render`(ruling 1)는 `--publish` 단독 뒤에만 켠다. 그 경로는 sync 를
+    건너뛰므로 로컬 `review.md` 에 아직 반영되지 않은 사용자의 수정이 있을 수
+    있다 — 재pull 이 md 를 덮어쓰면 그 수정이 흔적 없이 사라진다(결정 0012 가
+    막으려는 것과 같은 손실). md 를 그대로 두면 다음 `sync`가 받아들인다.
     """
-    namespace = argparse.Namespace(mr=iid, all=False, render=False, no_render=False)
+    namespace = argparse.Namespace(mr=iid, all=False, render=False, no_render=no_render)
     try:
         if json_mode:
             with contextlib.redirect_stdout(sys.stderr):
