@@ -310,9 +310,23 @@ exit 0일 때:
 ```jsonc
 { "iid": 1234,
   "applied": [ { "thread": "a1b2c3d4", "state": "done", "reply_changed": true } ],
-  "warnings": [ { "line": 142, "message": "앵커 다음 줄이 헤더가 아님" } ],
+  "warnings": [ { "line": 142,  "message": "앵커 다음 줄이 헤더가 아님" },
+                { "line": null, "message": "a1b2c3d4: 답글이 있는데 상태가 `[ ]` 입니다 …" } ],
   "anchors": { "exact": 12, "fuzzy": 2, "stale": 1 } }
 ```
+
+#### `warnings[].line` 은 `null` 일 수 있다
+
+경고가 현재 `review.md` 의 어느 줄에도 걸리지 않을 때 `null` 이다. 지금 그런 경고는
+하나다 — 서버에서 resolve 돼 기본 렌더가 생략한 스레드에 `todo` + 답글이 남은 경우
+(그 스레드의 블록이 md 에 없다).
+
+**소비자는 위치를 만들어내면 안 된다**(MUST NOT) — `review.md:0` 이나 1행으로
+돌리지 않는다. `data-model.md` §4.9 가 `stale` 을 파일 1행에 붙이지 말라고 한 것과
+같은 이유다. 위치 없는 경고를 어떻게 보여줄지는 `editor.md` §3.4 에 있다.
+
+**`errors[].line` 은 항상 정수다.** 파싱 에러는 md 의 실제 줄에서만 나오므로
+(exit 2 경로), 에디터는 그 UI 에서 위치를 믿고 쓸 수 있다.
 
 exit 3(충돌)일 때 — Emacs의 충돌 버퍼가 이 형식을 소비한다:
 

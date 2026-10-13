@@ -528,6 +528,38 @@ def test_sync_warns_when_a_reply_sits_in_todo(synced, capsys):
     assert target.local.reply == "초안입니다"
 
 
+def test_sync_json_reports_a_positionless_warning_as_null(synced, capsys):
+    """`warnings[].line` 이 `null` 로 나가는 것을 고정한다 (`cli.md` §5).
+
+    계획 4·5 의 flymake·Diagnostics 가 이 페이로드를 소비한다. 정수를 가정하고
+    구현하면 이 경고에서 깨지므로, 계약을 테스트로 묶어 둔다.
+    """
+    path = store.review_json_path(synced, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    target = next(t for t in review.threads if t.id == "e5f6a1b2c3d4")
+    assert target.server.resolved and target.local.state == "todo"
+
+    # 이 스레드는 서버에서 resolve 됐고 미전송 작업이 없으므로 기본 렌더에서
+    # 빠진다 (review-md.md §5). 그 상태의 md 를 디스크에 두고, json 에만 답글을
+    # 남긴다 — 경고 대상이지만 md 에 블록이 없는 유일한 모양이다.
+    with store.review_lock(synced, 1234):
+        surface.write(synced, review, include_resolved=False)
+    assert "e5f6a1b2c3d4" not in _md(synced).read_text(encoding="utf-8")
+    target.local.reply = "보내지 않은 초안"
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["sync", "--json"]) == 0
+
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    positionless = [w for w in payload["warnings"] if w["line"] is None]
+    assert len(positionless) == 1, payload["warnings"]
+    assert "e5f6a1b2" in positionless[0]["message"]
+    # stderr 에도 가짜 위치를 만들지 않는다.
+    assert "review.md:0" not in captured.err
+    assert "review.md:None" not in captured.err
+
+
 def test_sync_refuses_to_write_after_the_checkout_moved(synced, checkout, capsys):
     before = store.review_json_path(synced, 1234).read_text(encoding="utf-8")
     text = edit_block(_md(synced).read_text(encoding="utf-8"), "a1b2c3d4e5f6", state="done")

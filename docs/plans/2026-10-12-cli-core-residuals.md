@@ -9,20 +9,10 @@ R6·R7은 같은 전 과제로, R5·R8은 계획 3의 설계(결정 0011·0012, 
 되비춘다)로 들어갔다. 아래는 그 R 번호가 붙지 않은, 아직 플랜에 배정되지 않은
 항목들이다.
 
-## 계획 4를 시작하기 전에 고칠 것 — 세 구현이 공유하는 계약 둘
-
-계획 3의 최종 브랜치 리뷰가 남긴 것이고, **에디터 플러그인이 읽는 계약이라 계획 4의
-첫 과제보다 앞이다.** 둘 다 코드가 아니라 스펙 텍스트가 코드를 못 따라간 경우다.
-
-- **`sync --json` 의 `warnings[].line` 이 `null` 일 수 있다.** md 에 블록이 없는
-  스레드의 경고(서버에서 resolve됐는데 `todo` + 답글이 남은 경우)가 그렇다.
-  `spec/cli.md` §5 의 페이로드 예시는 정수만 보여주므로, flymake·Diagnostics 가
-  정수를 가정하고 구현되면 그 경고에서 깨진다. §5 의 예시 옆에 nullable 을 적고,
-  에디터가 `null` 을 "파일 전체 경고" 로 다룰지 무시할지도 그때 정한다.
-- **`spec/data-model.md` 의 `capabilities.draft_notes` 정의가 "`GET draft_notes`
-  성공 여부" 로 남아 있다.** 구현은 404 만 미지원으로 보고 그 외 실패는 경고와 함께
-  `false` 로 접으며(`doctor` 는 "확인 불가" 로 구분한다), 그 차이가 "GitLab 버전이
-  낮다" 와 "방금 네트워크가 끊겼다" 를 가른다. 정의를 코드에 맞춘다.
+계획 3 의 최종 리뷰가 남긴 계약 두 건(`sync --json` 의 nullable `line`,
+`capabilities.draft_notes` 정의)은 2026-10-14 에 해소했다 — `spec/cli.md` §5,
+`spec/editor.md` §3.4, `spec/data-model.md` §3, 그리고 `mrq-design.md` §6 의
+future work 한 행.
 
 ## `push` 의 전송 처리량 (실측에서 나온 것)
 

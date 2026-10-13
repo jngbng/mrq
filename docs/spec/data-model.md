@@ -107,7 +107,7 @@ MVP에는 마이그레이션 구현체가 없다. 거부 경로만 구현한다(
 |---|---|---|
 | `diff_refs` | `pull` | MR의 `versions[0]`에서 가져온다. 재앵커링의 기준 좌표 |
 | `me.can_resolve` | `pull` | `projects/:fullpath`의 `permissions.project_access.access_level >= 30` |
-| `capabilities.draft_notes` | `pull` | `GET draft_notes` 성공 여부 |
+| `capabilities.draft_notes` | `pull` | draft 를 쓸 수 있는가. `GET draft_notes` 가 404 면 `false`(이 GitLab 이 지원하지 않음), 검사를 끝내지 못했으면(전송 실패) 경고와 함께 `false`. 둘을 가르는 곳은 `doctor` 다 — 404 는 `✗`, 그 외는 "확인 불가" (`cli.md` §13) |
 | `pulled_at` | `pull` | 서버 스냅샷을 찍은 시각 |
 | `rendered_at` | `pull`/`sync`/`reply`/`state` | `review.md`를 마지막으로 렌더한 시각. **충돌 감지의 기준** |
 
