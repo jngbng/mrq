@@ -6,9 +6,19 @@
   "web_url": "https://gitlab.example.com/group/sub/project/-/merge_requests/1234",
   "mr_state": "opened",
   "source_branch": "feat/retry",
-  "diff_refs": { "base_sha": "0000aaa", "start_sha": "0000bbb", "head_sha": "abc1234" },
-  "me": { "id": 7, "username": "bongya", "can_resolve": true },
-  "capabilities": { "draft_notes": true },
+  "diff_refs": {
+    "base_sha": "0000aaa",
+    "start_sha": "0000bbb",
+    "head_sha": "abc1234"
+  },
+  "me": {
+    "id": 7,
+    "username": "bongya",
+    "can_resolve": true
+  },
+  "capabilities": {
+    "draft_notes": true
+  },
   "pulled_at": "2026-10-11T09:12:00+09:00",
   "rendered_at": null,
   "threads": [
@@ -19,7 +29,7 @@
         "resolvable": true,
         "resolved": false,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -32,8 +42,13 @@
       },
       "anchor": {
         "line": "    resp = session.get(url)",
-        "context_before": ["def fetch(url):", "    session = make_session()"],
-        "context_after": ["    return resp.json()"],
+        "context_before": [
+          "def fetch(url):",
+          "    session = make_session()"
+        ],
+        "context_after": [
+          "    return resp.json()"
+        ],
         "hunk": "@@ -84,6 +84,9 @@ def fetch(url):\n     session = make_session()\n+    resp = session.get(url)\n"
       },
       "location": {
@@ -47,8 +62,8 @@
         {
           "id": 5566,
           "author": "jdoe",
-          "created_at": "2026-10-05T14:02:11+09:00",
-          "updated_at": "2026-10-05T14:02:11+09:00",
+          "created_at": "2026-10-05T05:02:11.000Z",
+          "updated_at": "2026-10-05T05:02:11.000Z",
           "body": "타임아웃 설정이 빠졌습니다. 기본값이면 무한 대기할 수 있어요.",
           "mine": false,
           "suggestions": []
@@ -70,7 +85,7 @@
         "resolvable": false,
         "resolved": false,
         "repliable": false,
-        "updated_at": "2026-10-05T13:40:00+09:00",
+        "updated_at": "2026-10-05T04:40:00.000Z",
         "note_count": 1
       },
       "position": null,
@@ -80,8 +95,8 @@
         {
           "id": 5500,
           "author": "kim",
-          "created_at": "2026-10-05T13:40:00+09:00",
-          "updated_at": "2026-10-05T13:40:00+09:00",
+          "created_at": "2026-10-05T04:40:00.000Z",
+          "updated_at": "2026-10-05T04:40:00.000Z",
           "body": "전반적으로 좋은데 타임아웃 쪽만 한 번 봐주세요.",
           "mine": false,
           "suggestions": []

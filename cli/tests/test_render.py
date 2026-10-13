@@ -248,3 +248,19 @@ def test_render_lengthens_fence_when_context_contains_backticks():
     )
     text = render.render(review)
     assert "````" in text
+
+
+# R7 — GitLab 은 created_at 을 UTC 로 준다 (MR !1 실측: "2026-10-12T23:07:20.443Z").
+# 기록된 오프셋 그대로 출력하면 08:07 KST 에 단 코멘트가 전날 23:07 로 보이고,
+# 우리가 만든 pulled/synced 는 로컬이라 한 화면에 9시간 어긋난 두 시각이 섞인다.
+def test_stamp_converts_utc_to_local_timezone():
+    assert render.stamp("2026-10-12T23:07:20.443Z") == "2026-10-13 08:07"
+
+
+def test_stamp_converts_numeric_offset_to_local_timezone():
+    assert render.stamp("2026-10-05T05:02:11+00:00") == "2026-10-05 14:02"
+
+
+def test_stamp_leaves_naive_value_alone():
+    # 타임존 정보가 없으면 추측하지 않는다.
+    assert render.stamp("2026-10-05T14:02:11") == "2026-10-05 14:02"

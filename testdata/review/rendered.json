@@ -29,7 +29,7 @@
         "resolvable": false,
         "resolved": false,
         "repliable": false,
-        "updated_at": "2026-10-05T13:40:00+09:00",
+        "updated_at": "2026-10-05T04:40:00.000Z",
         "note_count": 1
       },
       "position": null,
@@ -39,8 +39,8 @@
         {
           "id": 5500,
           "author": "kim",
-          "created_at": "2026-10-05T13:40:00+09:00",
-          "updated_at": "2026-10-05T13:40:00+09:00",
+          "created_at": "2026-10-05T04:40:00.000Z",
+          "updated_at": "2026-10-05T04:40:00.000Z",
           "body": "전반적으로 좋은데 타임아웃 쪽만 한 번 봐주세요.",
           "mine": false,
           "suggestions": []
@@ -62,7 +62,7 @@
         "resolvable": true,
         "resolved": false,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -95,8 +95,8 @@
         {
           "id": 5566,
           "author": "jdoe",
-          "created_at": "2026-10-05T14:02:11+09:00",
-          "updated_at": "2026-10-05T14:02:11+09:00",
+          "created_at": "2026-10-05T05:02:11.000Z",
+          "updated_at": "2026-10-05T05:02:11.000Z",
           "body": "타임아웃 설정이 빠졌습니다. 기본값이면 무한 대기할 수 있어요.",
           "mine": false,
           "suggestions": []
@@ -118,7 +118,7 @@
         "resolvable": true,
         "resolved": false,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -150,8 +150,8 @@
         {
           "id": 5600,
           "author": "park",
-          "created_at": "2026-10-05T16:10:00+09:00",
-          "updated_at": "2026-10-05T16:10:00+09:00",
+          "created_at": "2026-10-05T07:10:00.000Z",
+          "updated_at": "2026-10-05T07:10:00.000Z",
           "body": "코드 블록을 포함한 지적입니다.\n\n```python\nSession(timeout=10)\n```\n\n확인 부탁합니다.",
           "mine": false,
           "suggestions": []
@@ -173,7 +173,7 @@
         "resolvable": true,
         "resolved": false,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -206,8 +206,8 @@
         {
           "id": 5601,
           "author": "park",
-          "created_at": "2026-10-05T14:02:11+09:00",
-          "updated_at": "2026-10-05T14:02:11+09:00",
+          "created_at": "2026-10-05T05:02:11.000Z",
+          "updated_at": "2026-10-05T05:02:11.000Z",
           "body": "타임아웃 설정이 빠졌습니다. 기본값이면 무한 대기할 수 있어요.",
           "mine": false,
           "suggestions": []
@@ -229,7 +229,7 @@
         "resolvable": true,
         "resolved": true,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -262,8 +262,8 @@
         {
           "id": 5602,
           "author": "jdoe",
-          "created_at": "2026-10-05T14:02:11+09:00",
-          "updated_at": "2026-10-05T14:02:11+09:00",
+          "created_at": "2026-10-05T05:02:11.000Z",
+          "updated_at": "2026-10-05T05:02:11.000Z",
           "body": "타임아웃 설정이 빠졌습니다. 기본값이면 무한 대기할 수 있어요.",
           "mine": false,
           "suggestions": []
@@ -285,7 +285,7 @@
         "resolvable": true,
         "resolved": true,
         "repliable": true,
-        "updated_at": "2026-10-05T15:30:00+09:00",
+        "updated_at": "2026-10-05T06:30:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -318,8 +318,8 @@
         {
           "id": 5603,
           "author": "jdoe",
-          "created_at": "2026-10-05T14:02:11+09:00",
-          "updated_at": "2026-10-05T14:02:11+09:00",
+          "created_at": "2026-10-05T05:02:11.000Z",
+          "updated_at": "2026-10-05T05:02:11.000Z",
           "body": "타임아웃 설정이 빠졌습니다. 기본값이면 무한 대기할 수 있어요.",
           "mine": false,
           "suggestions": []
@@ -341,7 +341,7 @@
         "resolvable": true,
         "resolved": false,
         "repliable": true,
-        "updated_at": "2026-10-05T16:10:00+09:00",
+        "updated_at": "2026-10-05T07:10:00.000Z",
         "note_count": 1
       },
       "position": {
@@ -388,8 +388,8 @@
         {
           "id": 5570,
           "author": "jdoe",
-          "created_at": "2026-10-05T16:10:00+09:00",
-          "updated_at": "2026-10-05T16:10:00+09:00",
+          "created_at": "2026-10-05T07:10:00.000Z",
+          "updated_at": "2026-10-05T07:10:00.000Z",
           "body": "이 루프 전체를 `retry.should_retry` 를 쓰는 형태로 바꿔 주세요.",
           "mine": false,
           "suggestions": []

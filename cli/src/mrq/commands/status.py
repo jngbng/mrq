@@ -2,11 +2,10 @@
 
 from __future__ import annotations
 
-import datetime as dt
 import json
 import sys
 
-from mrq import model, report, store
+from mrq import model, render, report, store
 
 # `server-changed` 는 없다 — `status` 는 네트워크를 쓰지 않으므로 그 질문에
 # 정직하게 답할 수 없다 (`report.py` 의 모듈 docstring, `cli.md` §8).
@@ -79,7 +78,5 @@ def _warning_text(review: model.Review, warning: dict) -> str:
 
 
 def _hhmm(value: str | None) -> str:
-    try:
-        return dt.datetime.fromisoformat(value).strftime("%H:%M")  # type: ignore[arg-type]
-    except (TypeError, ValueError):
-        return "-"
+    # 포매터를 하나로 모은다. 두 벌이면 한쪽만 로컬 변환하는 상태로 갈라진다.
+    return render.stamp(value, "%H:%M") if value else "-"

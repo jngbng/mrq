@@ -119,20 +119,30 @@ def _quotes(thread: model.Thread) -> list[str]:
     for index, note in enumerate(thread.notes):
         if index:
             out.append(">")
-        out.append(f"> **@{note.author}** {_stamp(note.created_at)}")
+        out.append(f"> **@{note.author}** {stamp(note.created_at)}")
         for raw in note.body.replace("\r\n", "\n").replace("\r", "\n").split("\n"):
             out.append(f"> {raw}" if raw.strip() else ">")
     out.append("")
     return out
 
 
-def _stamp(value: str, pattern: str = "%Y-%m-%d %H:%M") -> str:
-    """기록된 오프셋 그대로 포맷한다. 로컬 타임존으로 변환하지 않는다 —
-    머신 설정에 따라 렌더 결과가 달라지면 골든 테스트가 거짓으로 깨진다."""
+def stamp(value: str, pattern: str = "%Y-%m-%d %H:%M") -> str:
+    """시각을 로컬 타임존으로 변환해 포맷한다 (docs/spec/review-md.md §5).
+
+    GitLab 은 `created_at` 을 UTC 로 준다. 기록된 오프셋 그대로 출력하면
+    08:07 에 단 코멘트가 전날 23:07 로 보이는데, 같은 화면의 `pulled`/`synced`
+    는 우리가 만든 로컬 시각이라 9시간 어긋난 두 시각이 섞인다.
+
+    타임존 정보가 없는 값은 추측하지 않고 그대로 포맷한다. 골든 테스트의
+    결정성은 TZ 고정으로 확보한다 (`docs/spec/testing.md` §2).
+    """
     try:
-        return dt.datetime.fromisoformat(value).strftime(pattern)
+        parsed = dt.datetime.fromisoformat(value)
     except (TypeError, ValueError):
         return value or "-"
+    if parsed.tzinfo is not None:
+        parsed = parsed.astimezone()
+    return parsed.strftime(pattern)
 
 
 _LANGUAGE = {
@@ -212,7 +222,7 @@ def _summary_line(review: model.Review) -> str:
         if thread.location is not None and thread.location.confidence in stats:
             stats[thread.location.confidence] += 1
     return (
-        f"head {review.diff_refs.head_sha[:7]} · pulled {_stamp(review.pulled_at, '%H:%M')} · "
+        f"head {review.diff_refs.head_sha[:7]} · pulled {stamp(review.pulled_at, '%H:%M')} · "
         f"unresolved {unresolved} · "
         f"exact {stats['exact']} fuzzy {stats['fuzzy']} stale {stats['stale']}"
     )

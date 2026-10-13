@@ -1,11 +1,23 @@
 import json
 import os
 import subprocess
+import time
 from pathlib import Path
 
 import pytest
 
 from mrq import model, store
+
+
+@pytest.fixture(scope="session", autouse=True)
+def pinned_timezone():
+    """렌더 시각은 로컬 타임존으로 변환된다 (`docs/spec/review-md.md` §5).
+
+    그래서 골든의 결정성을 머신 설정에 맡길 수 없다. 여기서 고정한다 —
+    UTC 로 고정하면 변환이 일어나는지 아닌지를 구분하지 못하므로 안 된다.
+    """
+    os.environ["TZ"] = "Asia/Seoul"
+    time.tzset()
 
 
 def _git(repo: Path, *args: str) -> str:
