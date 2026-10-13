@@ -7,6 +7,8 @@ GitLab 의 discussion 객체에는 `{id, individual_note, notes[]}` 만 있다. 
 
 from __future__ import annotations
 
+import datetime as dt
+
 from mrq import glab, model
 from mrq.mr import PROJECT
 
@@ -40,7 +42,7 @@ def _to_thread(discussion: dict, notes: list[dict], me_username: str) -> model.T
             repliable=not discussion.get("individual_note", False),
             # 필터 후 notes 로 계산한다. 필터 전 값을 쓰면 라벨 변경만으로
             # updated_at 이 움직여 push 가 멀쩡한 스레드를 건너뛴다.
-            updated_at=max(n["updated_at"] for n in notes),
+            updated_at=_latest_updated_at(notes),
             note_count=len(notes),
         ),
         position=_to_position(root.get("position")),
@@ -49,6 +51,35 @@ def _to_thread(discussion: dict, notes: list[dict], me_username: str) -> model.T
         notes=[_to_note(n, me_username) for n in notes],
         local=model.Local(),
     )
+
+
+def _latest_updated_at(notes: list[dict]) -> str:
+    """가장 늦은 `updated_at` 을 **원본 문자열 그대로** 돌려준다.
+
+    문자열 `max()` 를 쓰면 안 된다 — GitLab 이 `Z` 와 `+09:00` 을 섞어 주면
+    사전식 순서가 실제 시각과 어긋나고, 더 이른 시각이 "가장 늦은 것" 으로
+    뽑힌다. 그러면 노트 수가 그대로인 채 본문만 수정된 스레드의 변경을 `push`
+    가 놓치고(`cli.md` §9 3단계), 동료가 고친 내용 위에 답글이 올라간다.
+
+    값을 정규화해 저장하지는 않는다. `server.updated_at` 은 서버 스냅샷의
+    지문이고, `push` 는 같은 함수로 계산한 두 값을 **같음/다름**으로만 비교한다.
+    """
+    return max(notes, key=lambda note: _instant(note.get("updated_at")))["updated_at"]
+
+
+def _instant(value: object) -> dt.datetime:
+    """비교용 절대 시각. 파싱할 수 없으면 "가장 이른 것" 으로 둔다.
+
+    `render.stamp` 와 별도인 이유는 폴백이 다르기 때문이다 — 표시 경로는 원본
+    문자열을 그대로 보여주고, 여기서는 비교 가능한 값이 필요하다.
+    """
+    if not isinstance(value, str):
+        return dt.datetime.min.replace(tzinfo=dt.UTC)
+    try:
+        parsed = dt.datetime.fromisoformat(value)
+    except ValueError:
+        return dt.datetime.min.replace(tzinfo=dt.UTC)
+    return parsed if parsed.tzinfo is not None else parsed.astimezone()
 
 
 def _all_resolved(notes: list[dict]) -> bool:

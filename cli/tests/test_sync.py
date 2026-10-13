@@ -511,6 +511,23 @@ def test_sync_is_not_a_conflict_when_both_sides_wrote_the_same_value(synced):
 # --- I2: 브랜치가 바뀐 뒤의 쓰기 ------------------------------------------
 
 
+def test_sync_warns_when_a_reply_sits_in_todo(synced, capsys):
+    # a1b2c3d4e5f6 은 기본이 `[ ]`(todo) 이고 reply 가 비어 있다. 체크박스는
+    # 그대로 두고 답글만 쓴다 — push 는 todo 에 아무것도 하지 않는다(§4.7).
+    text = edit_block(_md(synced).read_text(encoding="utf-8"), "a1b2c3d4e5f6", reply="초안입니다")
+    _md(synced).write_text(text, encoding="utf-8")
+
+    assert main(["sync"]) == 0
+
+    captured = capsys.readouterr()
+    assert "전송되지 않습니다" in captured.err
+    assert "a1b2c3d4" in captured.err
+    # 경고는 알리기만 한다 — 상태를 바꾸지 않는다(MUST NOT).
+    target = next(t for t in _json(synced).threads if t.id == "a1b2c3d4e5f6")
+    assert target.local.state == "todo"
+    assert target.local.reply == "초안입니다"
+
+
 def test_sync_refuses_to_write_after_the_checkout_moved(synced, checkout, capsys):
     before = store.review_json_path(synced, 1234).read_text(encoding="utf-8")
     text = edit_block(_md(synced).read_text(encoding="utf-8"), "a1b2c3d4e5f6", state="done")

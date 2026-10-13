@@ -117,7 +117,36 @@ def plan_sync(
                     json_reply=render.normalize_reply(thread.local.reply),
                 )
             )
+    warnings += _todo_with_reply_warnings(review, parsed, applied)
     return applied, conflicts, warnings
+
+
+def _todo_with_reply_warnings(
+    review,
+    parsed: mdparse.Parsed,
+    applied: list[Applied],
+) -> list[mdparse.Message]:
+    """답글이 있는데 상태가 `todo` 인 스레드를 경고한다 (`cli.md` §5 MUST).
+
+    `push` 는 `todo` 에 아무것도 하지 않는다(`data-model.md` §4.7). 사람은
+    "답글을 썼으니 보내질 것" 으로 읽기 쉬운데 `status` 의 `push replies` 에도
+    세어지지 않아 검토면에서 보이지 않는다. 동작은 바꾸지 않는다 — `[ ]` 로
+    두고 초안을 적어 두는 것은 정상 워크플로다.
+    """
+    lines = {block.thread_id: block.line for block in parsed.blocks}
+    result = {item.thread: (item.state, item.reply) for item in applied}
+    out: list[mdparse.Message] = []
+    for thread in review.threads:
+        state, reply = result.get(thread.id, (thread.local.state, thread.local.reply))
+        if state == "todo" and reply.strip():
+            out.append(
+                mdparse.Message(
+                    lines.get(thread.id, 0),
+                    f"{thread.id[:8]}: 답글이 있는데 상태가 `[ ]` 입니다 — "
+                    "전송되지 않습니다. 보내려면 `[x]` 또는 `[~]` 로 바꾸세요",
+                )
+            )
+    return out
 
 
 def _targeted(thread_id: str, only: tuple[str, ...]) -> bool:

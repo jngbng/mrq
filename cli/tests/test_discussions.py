@@ -201,3 +201,58 @@ def test_fixture_file_produces_expected_thread_count():
     threads = discussions.to_threads(raw, "bongya")
     # 9개 discussion 중 1개(00ff00ff00ff)는 system 노트만 있어 제외된다.
     assert len(threads) == 8
+
+
+def test_updated_at_uses_real_time_not_lexicographic_order():
+    # 12:00Z = 21:00+09:00 이므로 두 번째 note 가 더 늦다. 사전식 비교는
+    # "2026-10-13T20:00:00+09:00" 을 고른다 — push 가 본문 수정을 놓친다.
+    raw = [
+        {
+            "id": "abc",
+            "individual_note": False,
+            "notes": [
+                note(
+                    id=1,
+                    created_at="2026-10-13T10:00:00.000Z",
+                    updated_at="2026-10-13T20:00:00+09:00",
+                    body="먼저",
+                ),
+                note(
+                    id=2,
+                    created_at="2026-10-13T11:00:00.000Z",
+                    updated_at="2026-10-13T12:00:00Z",
+                    body="나중",
+                ),
+            ],
+        }
+    ]
+
+    threads = discussions.to_threads(raw, "bongya")
+
+    assert threads[0].server.updated_at == "2026-10-13T12:00:00Z"
+
+
+def test_updated_at_survives_unparsable_values():
+    raw = [
+        {
+            "id": "abc",
+            "individual_note": False,
+            "notes": [
+                note(
+                    id=1,
+                    created_at="2026-10-13T10:00:00.000Z",
+                    updated_at="not-a-date",
+                    body="x",
+                ),
+                note(
+                    id=2,
+                    created_at="2026-10-13T11:00:00.000Z",
+                    updated_at="2026-10-13T12:00:00Z",
+                    body="y",
+                ),
+            ],
+        }
+    ]
+
+    # 파싱할 수 없는 값 때문에 pull 전체가 터지면 안 된다.
+    assert discussions.to_threads(raw, "bongya")[0].server.updated_at == "2026-10-13T12:00:00Z"
