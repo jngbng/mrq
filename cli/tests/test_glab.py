@@ -135,6 +135,11 @@ def test_status_204_with_no_body_is_none(glab):
         (403, "forbidden", False),
         (404, "not-found", False),
         (409, "conflict", False),
+        # 시간이 지나면 성공할 수 있는 것들. GitLab 은 API 에 기본 rate limit 이
+        # 걸려 있어 429 가 실제로 나온다 — retryable: false 로 기록하면 일시적
+        # 실패를 영구 실패로 알리게 된다.
+        (408, "unknown", True),
+        (429, "unknown", True),
         (500, "unknown", True),
         (503, "unknown", True),
         (418, "unknown", False),

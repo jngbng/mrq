@@ -134,7 +134,10 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 ### `glab` 기능 확인
 
 버전 번호를 하드코딩하지 않는다(MUST NOT). `doctor`가 이 도구가 의존하는 기능 셋을
-직접 확인한다 — `:fullpath` 확장, `--paginate --output ndjson`, `-F key=@-`.
+직접 확인한다 — `:fullpath` 확장, `--paginate --output ndjson`, `-F key=@-`,
+`-i` 가 비2xx 에도 헤더를 내는 것, 그리고 **명시적 `--method GET` 에서 `-f` 가 URL
+쿼리가 되는 것**. 마지막 둘은 각각 `push_error.status` 와 MR 탐지가 의존하는
+동작이고, glab 이 바꾸면 조용히 틀린 결과가 된다.
 버전 문자열은 표시용으로만 쓴다.
 
 ### `api()` 의 계약
@@ -173,6 +176,15 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 
 `paginate=False` 일 때 `-i` 를 붙이고 응답 첫 줄(`HTTP/<버전> <코드>`)에서 읽는다.
 본문은 **첫** `\r\n\r\n` 뒤부터다 — 본문이 빈 줄을 담고 있어도 잃지 않는다.
+
+**`-i` 는 비2xx 응답에도 헤더 블록을 낸다**(glab 1.114 실측, 404·502 확인).
+`GlabError.status` 가 통째로 이 사실 위에 서 있다 — 실패 응답에 헤더가 없다면
+상태 코드를 읽을 길이 없고 모든 실패가 `network` 로 접힌다. `-i` 를 떼거나 실패
+경로에서 건너뛰는 "최적화" 를 하면 `local.push_error.status` 가 조용히 전부
+`null` 이 된다.
+
+바이트 모양도 실측이다 — 상태줄은 `\n` 으로, 헤더는 `\r\n` 으로 끝난다. 파서는
+`\n\n` 도 구분자로 받아들여 glab 이 형식을 바꿔도 본문을 잃지 않는다.
 
 **`--paginate` 에는 `-i` 를 붙이지 않는다**(MUST NOT). glab 이 페이지마다 헤더
 블록을 내 ndjson 파싱이 깨진다. 그 경로(`pull` 의 discussions)는 상태 코드를 쓰지
