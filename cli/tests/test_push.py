@@ -984,6 +984,35 @@ def test_resolve_require_without_permission_sends_nothing(pushable, glab):
     ]
 
 
+def test_dry_run_on_unopened_mr_shows_preview_without_force(pushable, glab, capsys):
+    # dry-run 은 mr_state 확인보다 먼저다 — merged MR 에서도 --force 없이
+    # 미리보기를 볼 수 있어야 한다(확인 절차 자체가 전송 전용이므로). 이
+    # 스레드는 reply 와 no-resolve-permission skip 을 동시에 가진다 — 한쪽
+    # 액션(reply)은 보내지고 다른 쪽(resolve)만 막히는 조합이 "skip" 한 줄로만
+    # 찍혀 보낼 게 없는 것처럼 보이면, 다음 실제 push 가 그 reply 를 보낸다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    review.mr_state = "merged"
+    review.me.can_resolve = False
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["push", "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a1b2c3d4" in out
+    assert "reply" in out
+    assert "no-resolve-permission" in out
+    # "skip" 단독 줄이 아니라 reply 와 같은 줄에 덧붙어야 한다 — 순수 skip
+    # 줄의 시작 모양("<id>  skip  ...")이 아님을 확인한다.
+    assert "a1b2c3d4  skip" not in out
+    assert not [
+        c
+        for c in glab.calls()
+        if "--method" in c["argv"] and c["argv"][c["argv"].index("--method") + 1] in ("POST", "PUT")
+    ]
+
+
 def test_push_json_payloads_validate_against_the_contract(pushable, glab, capsys):
     # cli.md §9 의 페이로드 모양. 키가 바뀌면 에디터와 AI 가 조용히 깨진다.
     assert main(["push", "--json"]) == 0

@@ -97,9 +97,13 @@ def _report_dry_run(review: model.Review, sheet: push.Plan, *, json_mode: bool) 
     by_id = {t.id: t for t in review.threads}
     for decision in sheet.decisions:
         where = _where(by_id[decision.thread])
-        if decision.skip:
-            print(f"{decision.thread[:8]}  skip  {_SKIP_TEXT[decision.skip]:<16}  {where}")
-            continue
+        # reply/resolve 는 액션 단위로 독립이다 (push.Decision 의 docstring) —
+        # `decision.skip` 이 있다고 바로 "skip" 한 줄로 끝내면, 한쪽은 보내고
+        # 다른 쪽만 막힌 경우(reply 는 가는데 resolve 만 no-resolve-permission
+        # 으로 막히는 등)가 순수 skip 처럼 보인다. 검토면이 "아무 일도 없다"
+        # 고 말하는데 다음 push 가 실제로 무언가를 보내면, 이 화면의 존재
+        # 이유 자체가 무너진다. 그래서 ops 를 skip 과 무관하게 먼저 모으고,
+        # skip 이유는 ops 가 있든 없든 그 옆에 덧붙인다.
         ops = []
         if decision.reply:
             ops.append(f"reply({len(decision.reply.encode())}B)")
@@ -107,7 +111,15 @@ def _report_dry_run(review: model.Review, sheet: push.Plan, *, json_mode: bool) 
             ops.append("resolve")
         if not ops and decision.record_hash:
             ops.append("기록만 (서버에 이미 있음)")
-        print(f"{decision.thread[:8]}  {' + '.join(ops):<24}  {where}")
+        if not ops:
+            # 보낼 액션이 전혀 없다 — 순수 skip 한 줄.
+            print(f"{decision.thread[:8]}  skip  {_SKIP_TEXT[decision.skip]:<16}  {where}")
+            continue
+        label = " + ".join(ops)
+        if decision.skip:
+            # 한쪽은 보내지만 다른 쪽이 막혔다 — 그 사실을 같은 줄에 덧붙인다.
+            label += f"  (skip {_SKIP_TEXT[decision.skip]})"
+        print(f"{decision.thread[:8]}  {label:<24}  {where}")
     if not sheet.decisions:
         print("보낼 것이 없습니다.")
     return 0
