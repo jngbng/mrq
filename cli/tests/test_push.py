@@ -1,5 +1,3 @@
-
-
 from mrq import discussions, model, push
 
 SAMPLE = model.schema_path().parent.parent / "testdata" / "review" / "rendered.json"
@@ -222,6 +220,107 @@ def test_plan_resolve_skip_mode_sends_reply_only():
     assert decision.reply == "보낼 답글"
     # 요청하지 않은 일은 실패도 skip 도 아니다 (cli.md §9).
     assert sheet.skip == 0
+
+
+def test_plan_resolve_only_without_permission_survives_as_decision():
+    # Important 2 — reply 가 없는 resolve-only 스레드가 권한 부족으로 막히면
+    # Decision 의 모든 필드가 falsy 해져 `decisions` 에서 통째로 사라졌다.
+    # `no-resolve-permission` 을 skip 이유로 남겨 살아 있어야 한다 — 그래야
+    # `push --dry-run` 이 그 스레드를 보여줄 수 있다. 집계 `skip` 수는 그래도
+    # 늘지 않는다(cli.md §8 은 세 가지로 한정한다).
+    review = _blank(_review())
+    review.me.can_resolve = False
+    _ready(review, "a1b2c3d4e5f6", state="done")  # reply 없음 — resolve 만 요청
+
+    sheet = push.plan(review)
+
+    decision = next(d for d in sheet.decisions if d.thread == "a1b2c3d4e5f6")
+    assert decision.skip == "no-resolve-permission"
+    assert decision.resolve is False
+    assert decision.reply == ""
+    assert sheet.skip == 0
+    assert sheet.resolves == 0
+    assert sheet.pending_resolves == 1
+
+
+def test_plan_retracts_superseded_warning_when_thread_goes_missing():
+    # Minor 4 — no-reply 로 먼저 경고를 낸 뒤 같은 스레드가 server-missing 으로
+    # 판정되면 앞선 경고는 철회해야 한다. 안 그러면 한 스레드에 이유가 둘
+    # 찍히는데 skip 수는 하나뿐이라 어긋나 보인다.
+    review = _review()
+    thread = _ready(review, "7a0b1c2d3e4f", state="replied", reply="보낼 수 없는 답글")
+    thread.server.missing = True
+
+    sheet = push.plan(review)
+
+    decision = next(d for d in sheet.decisions if d.thread == "7a0b1c2d3e4f")
+    assert decision.skip == "server-missing"
+    assert {"thread": "7a0b1c2d3e4f", "reason": "server-missing"} in sheet.warnings
+    assert {"thread": "7a0b1c2d3e4f", "reason": "no-reply"} not in sheet.warnings
+
+
+def test_plan_snapshot_absence_yields_server_missing_even_without_the_flag():
+    # Minor 6a — push 시점의 server-missing 은 저장된 `server.missing` 플래그가
+    # 아니라 스냅샷에 그 스레드가 없다는 사실에서도 나온다(cli.md §9 3단계 1행).
+    review = _review()
+    _ready(review, "a1b2c3d4e5f6", state="done", reply="보낼 답글")
+    snapshot = [t for t in _review().threads if t.id != "a1b2c3d4e5f6"]
+
+    decision = next(
+        d for d in push.plan(review, snapshot=snapshot).decisions if d.thread == "a1b2c3d4e5f6"
+    )
+
+    assert decision.skip == "server-missing"
+    assert decision.reply == ""
+    assert decision.resolve is False
+
+
+def test_plan_force_does_not_bypass_second_defence_for_already_posted_body():
+    # Minor 6b — `--force` 가 무시하는 것은 "서버가 바뀌었다" 뿐이다. 이미
+    # 보낸 본문을 다시 보내는 것은 force 로도 켜지지 않는다 — 2차 방어는
+    # changed 검사 바로 아래에 있고 force 와 무관하게 늘 적용된다.
+    review = _review()
+    _ready(review, "a1b2c3d4e5f6", state="replied", reply="이미 서버에 있다")
+    snapshot = _review().threads
+    target = next(t for t in snapshot if t.id == "a1b2c3d4e5f6")
+    target.notes.append(
+        model.Note(
+            id=9002,
+            author="bongya",
+            created_at="2026-10-13T12:00:00.000Z",
+            updated_at="2026-10-13T12:00:00.000Z",
+            body="이미 서버에 있다",
+            mine=True,
+        )
+    )
+    target.server.note_count = len(target.notes)
+    local = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    local.server.note_count = target.server.note_count
+
+    decision = next(
+        d
+        for d in push.plan(review, snapshot=snapshot, force=True).decisions
+        if d.thread == "a1b2c3d4e5f6"
+    )
+
+    assert decision.reply == ""
+    assert decision.record_hash == push.body_hash("이미 서버에 있다")
+
+
+def test_plan_decision_skip_is_per_action_not_per_thread():
+    # Minor 6c — repliable=False 지만 resolvable=True 인 done 스레드는 reply 는
+    # no-reply 로 막히고 resolve 는 그대로 진행된다. skip 필드는 "이 스레드가
+    # 통째로 막혔다" 가 아니라 "이 중 한 액션이 막혔다" 를 뜻한다
+    # (Decision.skip 문서 참조).
+    review = _review()
+    thread = _ready(review, "a1b2c3d4e5f6", state="done", reply="못 보내는 답글")
+    thread.server.repliable = False
+
+    decision = next(d for d in push.plan(review).decisions if d.thread == "a1b2c3d4e5f6")
+
+    assert decision.skip == "no-reply"
+    assert decision.reply == ""
+    assert decision.resolve is True
 
 
 def test_plan_warns_about_recorded_push_error_and_todo_reply():

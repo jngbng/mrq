@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import sys
 
-from mrq import model, render, report, store
+from mrq import model, push, render, report, store
 
 # `server-changed` 는 없다 — `status` 는 네트워크를 쓰지 않으므로 그 질문에
 # 정직하게 답할 수 없다 (`report.py` 의 모듈 docstring, `cli.md` §8).
@@ -42,7 +42,7 @@ def run(args) -> int:
         f"· synced {_hhmm(payload['rendered_at'])}"
     )
     print()
-    t, local, anchors, push = (
+    t, local, anchors, push_block = (
         payload["threads"],
         payload["local"],
         payload["anchors"],
@@ -59,22 +59,26 @@ def run(args) -> int:
     print(
         f"anchors   exact {anchors['exact']} · fuzzy {anchors['fuzzy']} · stale {anchors['stale']}"
     )
-    line = f"push      replies {push['replies']} · resolves {push['resolves']}"
-    if push["skip"]:
-        line += f" · skip {push['skip']}"
+    line = f"push      replies {push_block['replies']} · resolves {push_block['resolves']}"
+    if push_block["skip"]:
+        line += f" · skip {push_block['skip']}"
     print(line)
+    # `payload` 는 `report.status_payload` 가 이미 `push.plan` 으로 계산했다.
+    # 경고 문구에 쓸 "권한 없이 막힌 수"도 같은 함수에서 다시 얻는다(Minor 5)
+    # — 여기서 직접 재계산하면 `resolvable`/`--resolve` 모드를 놓치고
+    # `plan` 의 판정과 어긋난다.
+    sheet = push.plan(review)
     for warning in payload["warnings"]:
-        print(f"          ⚠ {_warning_text(review, warning)}")
+        print(f"          ⚠ {_warning_text(review, warning, sheet)}")
     return 0
 
 
-def _warning_text(review: model.Review, warning: dict) -> str:
+def _warning_text(review: model.Review, warning: dict, sheet: push.Plan) -> str:
     reason = warning["reason"]
     if reason == "no-resolve-permission":
-        pending = sum(
-            1 for t in review.threads if t.local.state == "done" and not t.server.resolved
+        return (
+            f"resolve {sheet.pending_resolves}건: 권한 없음 (Developer 이상 필요) → 전송하지 않음"
         )
-        return f"resolve {pending}건: 권한 없음 (Developer 이상 필요) → 전송하지 않음"
     if reason == "mr-not-opened":
         return f"MR 이 {review.mr_state} 상태입니다 — push 는 확인을 요구합니다"
     return f"{warning['thread'][:8]} {_REASON_TEXT.get(reason, reason)}"
