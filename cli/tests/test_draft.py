@@ -59,6 +59,29 @@ def test_draft_force_after_crashed_post_does_not_duplicate_body(pushable, glab):
     assert target.local.reply == ""
 
 
+def test_draft_skips_resolve_only_thread_with_named_warning(pushable, glab, capsys):  # noqa: F811
+    # Important 2 — resolve 만 필요한(답글 없는) `done` 스레드를 `--draft` 로
+    # 밀면 `POST draft_notes` 에 `note=""` 를 보내게 된다. `note` 는
+    # 필수라서 GitLab 이 400 을 낼 수 있고, 받아들이면 빈 note 가 실제로
+    # 생긴다. §9 는 draft 에 별도 `PUT discussions` 를 금지하므로(MUST NOT)
+    # resolve 만은 draft 로 표현할 수 없다 — 건너뛰고 스레드를 이름으로
+    # 짚어 일반 `push` 로 안내해야 한다(ruling).
+    set_local(pushable, "a1b2c3d4e5f6", state="done", reply="")
+
+    assert main(["push", "--draft"]) == 0
+
+    assert not [
+        c
+        for c in glab.calls()
+        if "draft_notes" in c["argv"][1]
+        and "--method" in c["argv"]
+        and c["argv"][c["argv"].index("--method") + 1] == "POST"
+    ]
+    err = capsys.readouterr().err
+    assert "a1b2c3d4" in err
+    assert "mrq push" in err
+
+
 def test_draft_bundles_reply_and_resolve(pushable, glab):  # noqa: F811
     set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
     glab.route(f"GET {DRAFTS}", [])

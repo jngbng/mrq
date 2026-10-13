@@ -646,6 +646,13 @@ draft 안에만 있고, 로컬에서 지우면 사용자가 자기 글을 잃는
 - resolve는 `resolve_discussion`으로 draft에 묶는다. 별도 `PUT discussions`를
   보내지 않는다(MUST NOT). 권한이 없으면 `false`로 보내고 경고한다 — `--resolve`
   표의 `auto` 행과 같은 판정이다
+- **답글이 없는(resolve-only) 스레드는 `--draft`에서 건너뛴다**(MUST) — `POST
+  draft_notes`의 `note`는 필수라 빈 본문은 GitLab이 거부하거나(400), 받아들이면
+  빈 note가 실제로 생긴다. resolve만 즉시 반영하는 별도 `PUT discussions`도 위
+  규칙으로 금지되어 있으므로(MUST NOT) draft 경로로는 resolve만 표현할 방법이
+  없다. 건너뛸 때 스레드를 이름으로 짚고 일반 `mrq push`로 안내해야 한다(MUST)
+  — 그 경로는 resolve만 정상적으로 보낸다. 근거는
+  [0012](../decisions/0012-draft-is-not-a-send.md)에 있다
 - `--draft --publish`(묶어 보내고 즉시 발행)와 `--publish` 단독(지난 draft 발행)을
   모두 허용한다
 - draft 수정·삭제(`PUT`/`DELETE draft_notes`)는 범위 밖이다. 잘못 만든 draft는

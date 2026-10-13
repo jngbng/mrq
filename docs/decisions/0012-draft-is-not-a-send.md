@@ -49,6 +49,14 @@ draft 는 discussion_id 가 일치하므로 ours 로 분류되어 확인 없이 
 않기 위해서다. `pushed_hash` 는 발행된 본문의 해시로 기록하므로, 고친 답글은
 해시가 달라 다음 `push` 에서 정상 전송된다.
 
+**답글이 없는(resolve-only) 스레드는 draft 로 만들지 않는다.** `POST
+draft_notes` 는 `note` 가 필수라 빈 본문을 보내면 GitLab 이 거부하거나(400),
+받아들이면 빈 note 가 실제로 생긴다. resolve 만 즉시 반영하는 별도 `PUT
+discussions` 는 위에서 이미 금지했으므로(draft 에 `PUT discussions` 를 섞지
+않는 이유 참조) draft 경로로는 resolve-only 를 표현할 방법이 없다. 건너뛰고
+스레드를 이름으로 짚어 일반 `mrq push` 로 안내한다 — 그 경로는 resolve 만
+정상적으로 보낸다. 빈 note 를 보내는 것보다 "건너뛰고 안내" 가 싸다.
+
 **발행 실패는 스레드 하나의 일이 아니다.** `bulk_publish` 는 선택적 발행이 없는
 MR 전체 단위 호출이므로, 실패하면 이번에 발행하려던 내(ours) draft 전부의
 스레드에 `push_error{op: "publish"}` 를 기록한다 — 임의의 스레드 하나에
