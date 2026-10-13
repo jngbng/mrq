@@ -750,6 +750,26 @@ def test_dry_run_lists_targets_and_sends_nothing(pushable, glab, capsys):  # noq
     ]
 
 
+def test_dry_run_location_column_shows_server_missing_badge(pushable, glab, capsys):  # noqa: F811
+    # Minor 7 — `--dry-run`의 위치 칼럼(`_where`)이 `review.md` 헤더
+    # (`render.header_line`)와 같은 배지 규칙을 쓰지 않아 `server-missing`
+    # 배지가 빠져 있었다. 공유 헬퍼(`render.where`)를 거치게 고친 뒤에는
+    # 위치 칼럼에도 그 배지가 보여야 한다.
+    _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="보낼 답글")
+    path = store.review_json_path(pushable, 1234)
+    review = model.loads(path.read_text(encoding="utf-8"))
+    target = next(t for t in review.threads if t.id == "a1b2c3d4e5f6")
+    target.server.missing = True
+    store.atomic_write_text(path, model.dumps(review))
+
+    assert main(["push", "--dry-run"]) == 0
+
+    out = capsys.readouterr().out
+    assert "a1b2c3d4" in out
+    assert "server-missing" in out
+    assert "`server-missing`" in out
+
+
 def test_dry_run_json_is_the_only_thing_on_stdout(pushable, capsys):  # noqa: F811
     _set_local(pushable, "a1b2c3d4e5f6", state="done", reply="확인했습니다")
 

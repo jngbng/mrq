@@ -12,7 +12,7 @@ import contextlib
 import json
 import sys
 
-from mrq import discussions, mdsync, model, prompt, push, store, surface, transport
+from mrq import discussions, mdsync, model, prompt, push, render, store, surface, transport
 from mrq.commands import pull as pull_command
 from mrq.errors import GlabError, MrqError, UsageError
 
@@ -206,16 +206,21 @@ def _report_dry_run_publish(review: model.Review, *, json_mode: bool) -> int:
 
 
 def _where(thread: model.Thread) -> str:
-    """`--dry-run` 의 위치 칼럼. `review.md` 헤더와 같은 규칙을 쓴다."""
-    if thread.location is None or not thread.location.path:
-        return "(general)"
-    line = thread.location.line or 1
-    suffix = (
-        f"    `{thread.location.confidence}`"
-        if thread.location.confidence in ("stale", "fuzzy")
-        else ""
-    )
-    return f"{thread.location.path}:{line}{suffix}"
+    """`--dry-run` 의 위치 칼럼. 기본 위치는 `render.where`로 얻는다(Minor 7)
+    — 이 함수가 직접 `thread.location.line or 1`을 계산하던 과거 버전은
+    `render._line_of`의 `max(line, 1)`과 두 번 드리프트했고, `server-missing`
+    배지도 빠져 있었다. `no-reply` 배지는 넣지 않는다 — 같은 dry-run 행에
+    이미 skip 이유로 보이므로 중복이다.
+    """
+    badges: list[str] = []
+    if thread.location is not None and thread.location.confidence in ("stale", "fuzzy"):
+        badges.append(f"`{thread.location.confidence}`")
+    if thread.server.missing:
+        badges.append("`server-missing`")
+    base = render.where(thread)
+    if not badges:
+        return base
+    return f"{base}    {' '.join(badges)}"
 
 
 def _send(root, review: model.Review, sheet: push.Plan) -> tuple[list[dict], dict[str, int]]:

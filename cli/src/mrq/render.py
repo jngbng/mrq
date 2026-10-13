@@ -69,23 +69,39 @@ def order(threads: list[model.Thread]) -> list[model.Thread]:
     return general + located
 
 
+def where(thread: model.Thread) -> str:
+    """위치 표시의 기본 형태 — `(general)` 또는 `<path>:<line>`.
+
+    `header_line`(review.md 헤더)과 `commands/push._where`(`--dry-run` 위치
+    칼럼)가 **같은 규칙**을 쓰기 위해 공유한다(Minor 7) — 전자는
+    `line or 1`, 후자는 `max(line, 1)`을 따로 써 이미 두 번 드리프트했다.
+    신뢰도·`server-missing` 배지는 두 호출자가 각자 다르게 붙인다(아래
+    `header_line` 참고) — 하나는 `no-reply`까지 더 붙이고, 다른 하나는
+    `--dry-run` 행에 이미 skip 이유로 나오는 `no-reply`를 중복으로
+    붙이지 않는다.
+    """
+    path = _path_of(thread)
+    if path is None:
+        return "(general)"
+    return f"{path}:{_line_of(thread)}"
+
+
 def header_line(thread: model.Thread) -> str:
     """`## [<상태>] <path>:<line> — @<author>  [배지...]` (review-md.md §3)."""
     author = thread.notes[0].author if thread.notes else "?"
     badges: list[str] = []
-    path = _path_of(thread)
-    if path is None:
-        where = "(general)"
-    else:
-        where = f"{path}:{_line_of(thread)}"
-        if thread.location is not None and thread.location.confidence in ("stale", "fuzzy"):
-            badges.append(f"`{thread.location.confidence}`")
+    # 신뢰도 배지는 위치가 있는(path 가 있는) 스레드에만 붙인다 — `(general)`
+    # 스레드는 `_path_of`가 `None`을 돌려주므로 여기 닿지 않는다. `where()`가
+    # 이미 그 분기로 "(general)"을 돌려주지만, 배지는 `where()`가 감추는
+    # 정보(원본 `location`)를 다시 봐야 해서 따로 판정한다.
+    if _path_of(thread) is not None and thread.location.confidence in ("stale", "fuzzy"):
+        badges.append(f"`{thread.location.confidence}`")
     if not thread.server.repliable:
         badges.append("`no-reply`")
     if thread.server.missing:
         badges.append("`server-missing`")
     suffix = "  " + " ".join(badges) if badges else ""
-    return f"## [{_STATE_CHAR[thread.local.state]}] {where} — @{author}{suffix}"
+    return f"## [{_STATE_CHAR[thread.local.state]}] {where(thread)} — @{author}{suffix}"
 
 
 def _path_of(thread: model.Thread) -> str | None:
