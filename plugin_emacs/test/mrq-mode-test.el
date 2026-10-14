@@ -483,5 +483,22 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
           "\"state\": \"todo\"" "\"state\": \"done\"" (mrq-test-sample-review) t t))
         (should (mrq-test-wait-for (lambda () (null (flymake-diagnostics)))))))))
 
+(ert-deftest mrq-minor-mode-binds-flymake-navigation ()
+  "flymake 는 `flymake-goto-next-error' 에 **기본 바인딩을 주지 않는다**
+\(`flymake-mode-map' 에는 메뉴바와 fringe 뿐이다, 실측).
+
+`editor.md' §3.1 은 \"그 명령이 그대로 다음 코멘트 이동이 된다\" 고 하지만,
+누를 키가 없으면 그 문장은 닿지 않는다.  `next-error' 로도 안 된다 —
+`flymake-mode' 는 소스 버퍼에서 `next-error-function' 을 설정하지 않는다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (mrq-setup)
+      (should (eq (key-binding (kbd "C-c m n")) #'flymake-goto-next-error))
+      (should (eq (key-binding (kbd "C-c m p")) #'flymake-goto-prev-error)))
+    (with-temp-buffer
+      (delay-mode-hooks (python-mode))
+      (should-not (eq (key-binding (kbd "C-c m n")) #'flymake-goto-next-error)))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

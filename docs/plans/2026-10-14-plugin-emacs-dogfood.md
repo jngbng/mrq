@@ -59,7 +59,11 @@ cd ~/workspace/mr-helper && mrq pull
 ## 기본 왕복
 
 - [ ] 소스 파일을 열면 코멘트가 `:note` 진단으로 뜬다
-- [ ] `M-g n` / `M-g p` 가 코멘트 사이를 돈다
+- [ ] `C-c m n` / `C-c m p` 가 코멘트 사이를 돈다
+      (`flymake-goto-next-error`/`-prev-error`. flymake 는 이 둘에 기본 바인딩을
+      주지 않고 `M-g n`(`next-error`)으로도 안 된다 — 소스 버퍼에서
+      `next-error-function` 을 설정하지 않는다. 당신 Exordium 설정은 `M-g` 를
+      `goto-line` 에 묶어 접두사 자체를 없앴다: `init-look-and-feel.el:281`)
 - [ ] `C-c m r` → `review.md` 의 해당 `### reply` 로 간다
 - [ ] 답글을 쓰고 저장 → `sync` 가 돌고 **커서가 그 스레드에 남는다**
 - [ ] 저장 후 열린 소스 버퍼의 진단이 **자동으로** 갱신된다 (file-notify)
@@ -73,8 +77,11 @@ cd ~/workspace/mr-helper && mrq pull
 - [ ] **다른 flymake 백엔드와 공존한다.** 파이썬/elisp 버퍼에서 기존 린터 진단과
       섞여 뜨고, 어느 쪽도 사라지지 않는다. (`M-x flymake-show-buffer-diagnostics`
       로 둘 다 보이는지 확인)
-- [ ] **키 바인딩이 충돌하지 않는다.** `C-h k C-c m r` 가 `mrq-reply-at-point` 를
-      가리킨다. Exordium 의 기존 `C-c m` 바인딩과 겹치지 않는다
+- [ ] **키 바인딩이 충돌하지 않는다.** `C-h k C-c m r` / `C-c m n` 이 각각
+      `mrq-reply-at-point` / `flymake-goto-next-error` 를 가리킨다. Exordium 의
+      기존 `C-c m` 바인딩과 겹치지 않는다
+- [ ] `M-n`/`M-p` 처럼 더 짧은 키를 쓰고 싶으면:
+      `(define-key mrq-minor-mode-map (kbd "M-n") #'flymake-goto-next-error)`
 - [ ] `review.md` 에서 평문 글자가 전부 그대로 입력된다 — 리뷰에서 `g`/`r` 이
       명령에 묶여 있던 것을 `C-c C-g`/`C-c C-r` 로 옮겼다. `C-c C-s`/`C-c C-p`/
       `C-c C-t` 가 markdown-mode 의 기존 바인딩과 겹치지 않는지도 확인

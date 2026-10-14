@@ -119,6 +119,11 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 `flymake-goto-next-error` / `flymake-goto-prev-error`가 그대로 "다음/이전 MR
 코멘트로 이동"이 된다. 별도 명령을 만들 필요가 없다.
 
+**다만 키는 줘야 한다**(MUST). flymake 는 그 둘에 기본 바인딩을 주지 않고
+(`flymake-mode-map`에는 메뉴바와 fringe뿐이다), 소스 버퍼에서
+`next-error-function`도 설정하지 않아 `M-g n`(`next-error`)으로도 닿지 않는다.
+키가 없으면 위 문장은 사용자에게 닿지 않는 말이 된다.
+
 ### 3.2 목록 버퍼 (`mrq-mode`)
 
 ```elisp
@@ -160,9 +165,16 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 가리키는 **다른 MR**이 sync 된다 — MR 3의 답글은 디스크에만 남고 다음 재렌더에
 사라진다.
 
-소스 버퍼에서는 `C-c m r`이 `mrq-reply-at-point` — `review.md`를 열어 해당 스레드의
-`### reply` 섹션으로 점프한다. 답글은 md에서 작성한다. 소스 ↔ 목록 왕복이 이것으로
-닫힌다.
+소스 버퍼의 키는 **마이너 모드**에 둔다(MUST) — `local-set-key`는 현재 로컬 맵을
+그 자리에서 고치는데 그 맵이 곧 메이저 모드 맵이라, `prog-mode-hook`에서 한 번
+부르면 그 세션의 모든 같은 모드 버퍼(리뷰와 무관한 다른 프로젝트 포함)가 오염된다.
+
+| 키 | 동작 |
+|---|---|
+| `C-c m r` | `mrq-reply-at-point` — `review.md`의 해당 `### reply`로 점프 |
+| `C-c m n` / `C-c m p` | `flymake-goto-next-error` / `flymake-goto-prev-error` |
+
+답글은 md에서 작성한다. 소스 ↔ 목록 왕복이 `C-c m r`과 `RET`으로 닫힌다.
 
 ### 3.3 저장 훅
 
