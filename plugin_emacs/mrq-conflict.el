@@ -34,18 +34,18 @@
 (defvar-local mrq-conflict--dir nil
   "`mrq sync' 를 돌릴 리뷰 디렉터리.")
 
-(defvar mrq-conflict-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "m") #'mrq-conflict-choose-md)
-    (define-key map (kbd "j") #'mrq-conflict-choose-json)
-    (define-key map (kbd "M") #'mrq-conflict-choose-all-md)
-    (define-key map (kbd "J") #'mrq-conflict-choose-all-json)
-    (define-key map (kbd "n") #'mrq-conflict-next)
-    (define-key map (kbd "p") #'mrq-conflict-previous)
-    (define-key map (kbd "C-c C-c") #'mrq-conflict-apply)
-    (define-key map (kbd "q") #'quit-window)
-    map)
+(defvar mrq-conflict-mode-map (make-sparse-keymap)
   "`mrq-conflict-mode' 의 키맵.")
+
+;; 내용을 최상위에서 채운다 — `defvar' 가 재평가에서 초기화 폼을 건너뛴다.
+(define-key mrq-conflict-mode-map (kbd "m") #'mrq-conflict-choose-md)
+(define-key mrq-conflict-mode-map (kbd "j") #'mrq-conflict-choose-json)
+(define-key mrq-conflict-mode-map (kbd "M") #'mrq-conflict-choose-all-md)
+(define-key mrq-conflict-mode-map (kbd "J") #'mrq-conflict-choose-all-json)
+(define-key mrq-conflict-mode-map (kbd "n") #'mrq-conflict-next)
+(define-key mrq-conflict-mode-map (kbd "p") #'mrq-conflict-previous)
+(define-key mrq-conflict-mode-map (kbd "C-c C-c") #'mrq-conflict-apply)
+(define-key mrq-conflict-mode-map (kbd "q") #'quit-window)
 
 (define-derived-mode mrq-conflict-mode special-mode "MRQ-Conflict"
   "충돌을 스레드마다 해소한다."

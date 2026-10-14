@@ -238,6 +238,13 @@ ERT로 검증한다. `make test-emacs`가 `plugin_emacs/test/*-test.el` 전부�
 | `mrq-mode-test.el` | 헤더 정규식, 체크박스 순환, `RET`, `next-error`, 저장 훅의 point 복원, `mrq-reply-at-point` |
 | `mrq-boundary-test.el` | §1의 경계를 코드 모양으로 — json 파싱·쓰기·git·프로세스가 어느 파일에 있는지 |
 
+**키맵은 빈 채로 `defvar` 하고 `define-key`를 최상위에서 부른다**(SHOULD).
+`defvar`는 이미 값이 있으면 초기화 폼을 평가하지 않으므로, 키맵을 초기값으로
+만들면 `eval-buffer`/`load-library`로 고친 바인딩이 반영되지 않고 사용자가
+Emacs를 껐다 켜야 한다. `minor-mode-map-alist`와 접두사 항목은 키맵 **객체**를
+들고 있어서 변수에 새 객체를 넣어도 닿지 않는다 — 객체를 그대로 두고 내용만
+바꿔야 한다. 직접 고쳐 쓰는 플러그인에서 재시작을 요구하는 것은 비싸다.
+
 `make lint`은 `byte-compile-error-on-warn t`로 바이트컴파일하고 `checkdoc`를
 돌린다. **둘 다 종료 코드를 바꾼다**(MUST) — elisp에서 가장 싼 방어이고, 오타,
 잘못된 인자 수, 쓰이지 않는 변수, 지연 `require`의 미선언 참조를 전부 여기서 잡는다.

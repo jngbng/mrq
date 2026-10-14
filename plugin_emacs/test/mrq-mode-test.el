@@ -12,6 +12,7 @@
 (require 'mrq)
 (require 'mrq-mode)
 (require 'mrq-test-helper)
+(require 'mrq-boundary-test)
 (require 'python)
 
 (defconst mrq-mode-test--md
@@ -499,6 +500,29 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
     (with-temp-buffer
       (delay-mode-hooks (python-mode))
       (should-not (eq (key-binding (kbd "C-c m n")) #'flymake-goto-next-error)))))
+
+(ert-deftest mrq-keymaps-survive-a-reload ()
+  "`eval-buffer'/`load-library' 로 고친 바인딩이 반영돼야 한다.
+
+`defvar' 는 이미 값이 있으면 초기화 폼을 **평가하지 않는다** — 키맵을
+`defvar' 의 초기값으로 만들면 재로드가 아무 효과가 없고, 사용자는 Emacs 를
+껐다 켜야 한다.  게다가 `mrq-minor-mode-map' 과 `minor-mode-map-alist' 는
+키맵 **객체**를 들고 있으므로 변수에 새 객체를 넣어도 닿지 않는다.
+
+그래서 키맵은 빈 채로 `defvar' 하고 `define-key' 를 최상위에서 부른다 —
+객체는 그대로 두고 내용만 바꾼다."
+  (let ((file (expand-file-name "mrq.el" mrq-boundary-test--src-dir))
+        (command-map mrq-command-map)
+        (minor-map mrq-minor-mode-map))
+    ;; 옛 버전처럼 바인딩 하나를 지운다
+    (define-key mrq-command-map (kbd "n") nil)
+    (should-not (lookup-key mrq-command-map (kbd "n")))
+    (load file nil t)
+    (should (eq (lookup-key mrq-command-map (kbd "n")) #'flymake-goto-next-error))
+    ;; 객체가 바뀌지 않았다 — minor-mode-map-alist 가 여전히 유효하다
+    (should (eq mrq-command-map command-map))
+    (should (eq mrq-minor-mode-map minor-map))
+    (should (eq (lookup-key mrq-minor-mode-map (kbd "C-c m")) mrq-command-map))))
 
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

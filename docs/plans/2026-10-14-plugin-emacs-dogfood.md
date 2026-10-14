@@ -36,6 +36,28 @@ Emacs 는 로그인 셸의 PATH 를 못 받는 경우가 있다. `nil` 이 나�
 (add-to-list 'exec-path (expand-file-name "~/.local/bin"))
 ```
 
+### 고친 것을 Emacs 재시작 없이 반영하는 법
+
+```
+M-x load-library RET mrq RET          ; 고친 파일만
+```
+
+키맵은 빈 채로 `defvar` 하고 `define-key` 를 최상위에서 부르므로 재로드가 그냥
+반영된다. `eval-buffer` 도 된다.
+
+**`defun`/`defvar` 를 하나만 고쳤다면 `C-M-x`(`eval-defun`)** 가 가장 빠르다 —
+`eval-defun` 은 `defvar` 도 강제로 다시 평가한다(`eval-buffer` 는 안 한다).
+
+반영이 안 되는 것 같으면 그 심볼을 직접 확인한다:
+
+```
+M-: (lookup-key mrq-command-map (kbd "n"))    ; → flymake-goto-next-error
+C-h k C-c m n
+```
+
+플러그인 구조 자체(모듈 추가, `define-minor-mode` 변경)를 바꿨다면 재시작이
+깔끔하다. `unload-feature` 는 마이너 모드와 훅이 얽혀 있어 권하지 않는다.
+
 ### 플러그인을 물린다
 
 ```elisp
@@ -58,7 +80,7 @@ cd ~/workspace/mr-helper && mrq pull
 
 ## 기본 왕복
 
-- [ ] 소스 파일을 열면 코멘트가 `:note` 진단으로 뜬다
+- [x] 소스 파일을 열면 코멘트가 `:note` 진단으로 뜬다
 - [ ] `C-c m n` / `C-c m p` 가 코멘트 사이를 돈다
       (`flymake-goto-next-error`/`-prev-error`. flymake 는 이 둘에 기본 바인딩을
       주지 않고 `M-g n`(`next-error`)으로도 안 된다 — 소스 버퍼에서

@@ -39,20 +39,22 @@
 (defconst mrq-mode--state-cycle '(?\s ?x ?~ ?-)
   "체크박스 순환 순서.  `review-md.md' §3 의 상태 문자.")
 
-(defvar mrq-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "RET") #'mrq-mode-visit)
-    (define-key map (kbd "C-c C-t") #'mrq-mode-toggle-state)
-    (define-key map (kbd "C-c C-s") #'mrq-mode-sync)
-    (define-key map (kbd "C-c C-p") #'mrq-mode-push)
-    (define-key map (kbd "C-c C-g") #'mrq-mode-pull)
-    (define-key map (kbd "C-c C-r") #'mrq-mode-reanchor)
-    map)
+(defvar mrq-mode-map (make-sparse-keymap)
   "`mrq-mode' 의 키맵.
 
 **평문 키를 명령에 묶지 않는다.**  이 버퍼는 `markdown-mode' 파생의
 편집면이고 답글을 여기서 쓴다 — `g'/`r' 을 묶으면 \"retry 로직을 고쳤습니다\"
 의 첫 글자가 `mrq reanchor' 를 돌린다.")
+
+;; 내용을 최상위에서 채우는 이유는 `mrq.el' 의 같은 자리와 같다 — `defvar' 가
+;; 재평가에서 초기화 폼을 건너뛰므로, 키맵을 초기값으로 만들면 재로드가
+;; 반영되지 않는다.
+(define-key mrq-mode-map (kbd "RET") #'mrq-mode-visit)
+(define-key mrq-mode-map (kbd "C-c C-t") #'mrq-mode-toggle-state)
+(define-key mrq-mode-map (kbd "C-c C-s") #'mrq-mode-sync)
+(define-key mrq-mode-map (kbd "C-c C-p") #'mrq-mode-push)
+(define-key mrq-mode-map (kbd "C-c C-g") #'mrq-mode-pull)
+(define-key mrq-mode-map (kbd "C-c C-r") #'mrq-mode-reanchor)
 
 (add-to-list 'compilation-error-regexp-alist-alist
              (list 'mrq mrq-mode-header-re 1 2))

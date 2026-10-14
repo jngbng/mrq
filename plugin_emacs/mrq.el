@@ -36,29 +36,31 @@
 (declare-function mrq-flymake-setup "mrq-flymake")
 (declare-function mrq-reply-at-point "mrq-mode")
 
-(defvar mrq-command-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "r") #'mrq-reply-at-point)
-    (define-key map (kbd "n") #'flymake-goto-next-error)
-    (define-key map (kbd "p") #'flymake-goto-prev-error)
-    map)
-  "소스 버퍼에서 `C-c m' 뒤에 오는 키들.
+(defvar mrq-command-map (make-sparse-keymap)
+  "소스 버퍼에서 `C-c m' 뒤에 오는 키들.")
 
-`n'/`p' 는 flymake 의 기존 명령에 **키만** 준다 (`editor.md' §3.1 이 새 명령을
-만들지 말라고 한다).  그런데 flymake 는 그 둘에 기본 바인딩을 주지 않고
-\(`flymake-mode-map' 에는 메뉴바와 fringe 뿐이다), 소스 버퍼에서
-`next-error-function' 도 설정하지 않아 `M-g n' 으로도 닿지 않는다 — 키가
-없으면 \"그 명령이 그대로 다음 코멘트 이동이 된다\" 는 문장이 닿지 않는다.
-
-더 짧은 키를 원하면 사용자가 직접 준다:
-
-  (define-key mrq-minor-mode-map (kbd \"M-n\") #\='flymake-goto-next-error)")
-
-(defvar mrq-minor-mode-map
-  (let ((map (make-sparse-keymap)))
-    (define-key map (kbd "C-c m") mrq-command-map)
-    map)
+(defvar mrq-minor-mode-map (make-sparse-keymap)
   "`mrq-minor-mode' 의 키맵.")
+
+;; 키맵은 **빈 채로 defvar 하고 내용은 여기서 채운다.**  `defvar' 는 이미 값이
+;; 있으면 초기화 폼을 평가하지 않으므로, 키맵을 초기값으로 만들면
+;; `eval-buffer'/`load-library' 로 고친 바인딩이 반영되지 않고 사용자가 Emacs 를
+;; 껐다 켜야 한다.  게다가 `minor-mode-map-alist' 와 아래 `C-c m' 항목은 키맵
+;; **객체**를 들고 있어서, 변수에 새 객체를 넣어도 닿지 않는다.  객체를 그대로
+;; 두고 내용만 바꾸면 재로드가 그냥 동작한다.
+;;
+;; `n'/`p' 는 flymake 의 기존 명령에 **키만** 준다 (`editor.md' §3.1 이 새 명령을
+;; 만들지 말라고 한다).  그런데 flymake 는 그 둘에 기본 바인딩을 주지 않고
+;; (`flymake-mode-map' 에는 메뉴바와 fringe 뿐이다), 소스 버퍼에서
+;; `next-error-function' 도 설정하지 않아 `M-g n' 으로도 닿지 않는다.
+;;
+;; 더 짧은 키를 원하면 사용자가 직접 준다:
+;;   (define-key mrq-minor-mode-map (kbd "M-n") #'flymake-goto-next-error)
+
+(define-key mrq-command-map (kbd "r") #'mrq-reply-at-point)
+(define-key mrq-command-map (kbd "n") #'flymake-goto-next-error)
+(define-key mrq-command-map (kbd "p") #'flymake-goto-prev-error)
+(define-key mrq-minor-mode-map (kbd "C-c m") mrq-command-map)
 
 ;;;###autoload
 (define-minor-mode mrq-minor-mode
