@@ -353,14 +353,36 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
   "버퍼를 되읽고 point 를 **스레드 id 기준**으로 복원한다.
 
 줄 번호로 복원하면 재렌더로 앞 블록의 줄 수가 바뀔 때마다 커서가 흘러간다 —
-답글을 쓸 때마다 일어난다."
-  (let ((anchor (mrq-mode--thread-at-point)))
+답글을 쓸 때마다 일어난다.
+
+두 가지를 함께 지킨다:
+
+- 오프셋이 **그 블록을 넘지 않게** 자른다.  `sync' 는 답글을 정규형으로 다시
+  쓰므로(`render.normalize_reply') 블록이 줄어드는 것이 정상 경로이고, 그대로
+  두면 커서가 다음 스레드로 흘러간다.
+- 앵커가 아예 사라졌으면(서버에서 resolve 돼 재렌더가 생략, `review-md.md' §5)
+  **버퍼 맨 처음으로 보내지 않는다.**  답글을 쓰던 사용자가 문서 꼭대기로
+  튕기는 것보다, 있던 줄 근처에 두는 쪽이 낫다."
+  (let ((anchor (mrq-mode--thread-at-point))
+        (line (line-number-at-pos))
+        (column (current-column)))
     (revert-buffer t t t)
-    (when anchor
-      (goto-char (point-min))
-      (if (re-search-forward (format "^<!-- mrq:%s " (regexp-quote (car anchor))) nil t)
-          (progn (beginning-of-line) (forward-line (cdr anchor)))
-        (goto-char (point-min))))))
+    (goto-char (point-min))
+    (let ((last (line-number-at-pos (point-max))))
+      (if (and anchor
+               (re-search-forward
+                (format "^<!-- mrq:%s " (regexp-quote (car anchor))) nil t))
+          (progn
+            (beginning-of-line)
+            (let* ((head (line-number-at-pos))
+                   (limit (save-excursion
+                            (forward-line 1)
+                            (if (re-search-forward mrq-mode-anchor-re nil t)
+                                (1- (line-number-at-pos))
+                              last))))
+              (forward-line (- (min (+ head (cdr anchor)) limit) head))))
+        (forward-line (1- (min line last)))))
+    (move-to-column column)))
 
 
 ;;;###autoload

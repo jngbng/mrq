@@ -606,5 +606,48 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
       (delete-other-windows)
       (kill-buffer other))))
 
+(defun mrq-mode-test--save-with-render (root rendered)
+  "RENDERED 로 재렌더하는 가짜 `mrq' 를 꽂고 저장한 뒤 (저장전 . 저장후) 줄."
+  (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+         (mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json
+                                            :writes (cons md rendered))))
+    (write-region mrq-mode-test--md nil md nil 'quiet)
+    (with-current-buffer (find-file-noselect md)
+      (goto-char (point-min))
+      (search-forward "<!-- mrq:a1b2c3d4e5f6")
+      (search-forward "### reply")
+      (forward-line 1)
+      (insert "답글 첫 줄\n답글 둘째 줄\n")
+      (let ((before (line-number-at-pos)))
+        (save-buffer)
+        (cons before (line-number-at-pos))))))
+
+(ert-deftest mrq-mode-point-stays-inside-the-block-when-it-shrinks ()
+  "재렌더가 블록을 줄이면 오프셋이 **다음 스레드로 흘러간다.**
+
+`sync' 는 답글을 정규형으로 다시 쓰므로(`render.normalize_reply') 사용자가
+친 빈 줄이 사라지는 것이 정상 경로다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((shrunk (replace-regexp-in-string "### reply\n\n\n" "### reply\n"
+                                            mrq-mode-test--md t t)))
+      (mrq-mode-test--save-with-render root shrunk)
+      (with-current-buffer (find-buffer-visiting
+                            (expand-file-name ".mrq/1234/review.md" root))
+        ;; 여전히 a1b2 블록 안이다 — 앞 블록으로도 뒤 블록으로도 넘어가지 않았다
+        (should (equal (car (mrq-mode--thread-at-point)) "a1b2c3d4e5f6"))))))
+
+(ert-deftest mrq-mode-point-does-not-jump-to-the-top-when-the-block-vanishes ()
+  "서버에서 resolve 된 스레드는 재렌더가 생략한다 (`review-md.md' §5).
+
+그때 앵커를 못 찾는다고 **버퍼 맨 처음**으로 보내면, 답글을 쓰던 사용자가
+문서 꼭대기로 튕긴다.  있던 자리 근처가 낫다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let* ((gone (replace-regexp-in-string
+                  "<!-- mrq:a1b2c3d4e5f6 v:000002 -->\n## \\[ \\] src/api/client.py:2 — @jdoe\n\n### reply\n\n\n"
+                  "" mrq-mode-test--md t t))
+           (lines (mrq-mode-test--save-with-render root gone)))
+      (should-not (equal gone mrq-mode-test--md))   ; 픽스처가 실제로 지워졌는가
+      (should (> (cdr lines) 1)))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here
