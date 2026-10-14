@@ -56,11 +56,20 @@
 4. **버퍼가 줄어 `location.line` 이 버퍼 밖일 때** — 진단 영역을 만들 때 clamp 하지
    않으면 `flymake-make-diagnostic` 이 범위 밖 위치로 에러를 던지거나 진단이
    사라진다. CLI 는 이 경우를 모른다(디스크 파일만 본다) → **Task 6**
-5. **`sync` 가 `review.md` 를 다시 쓴 뒤의 point** — 저장 훅이 되읽을 때 줄 번호로
+5. **동료가 먼저 resolve 한 스레드** — `review.md`(`review-md.md` §5)와
+   `list`(`cli.md` §7)는 서버에서 resolve 됐고 내 미전송 작업이 없는 스레드를
+   **감춘다.** `editor.md` §3.1 은 그 규칙을 적지 않았다. 적용하지 않으면 동료가
+   코멘트 다섯을 resolve 한 뒤에도 진단이 그대로 떠서, 사람이 보는 세 면이 서로
+   다른 집합을 보여준다 (`decisions/0001` 이 막으려는 것) → **Task 6**
+6. **`sync` 가 `review.md` 를 다시 쓴 뒤의 point** — 저장 훅이 되읽을 때 줄 번호로
    복원하면 재렌더로 앞 블록 길이가 바뀔 때마다 커서가 흘러간다. 답글을 쓸 때마다
    일어난다 → **Task 8**
 
 ---
+
+> **테스트 수에 대하여:** 각 과제의 `Expected:` 에 적힌 `Ran N tests` 는 **기준치**다.
+> 실제 수가 다르면 먼저 "테스트 파일이 로드되지 않았나" 를 의심하고
+> (`make test` 가 `test/*-test.el` 을 전부 `-l` 로 먹인다), 의도한 차이면 그대로 간다.
 
 ## File Structure
 
@@ -161,7 +170,8 @@ lint:
 	$(BATCH) --eval '(setq byte-compile-error-on-warn t)' \
 	  -f batch-byte-compile $(SRC)
 	$(BATCH) --eval '(progn (require (quote checkdoc)) \
-	  (dolist (f (list $(patsubst %,"%",$(SRC)))) (checkdoc-file f)))'
+	  (dolist (f (directory-files "$(CURDIR)" t "\\.el\\(quote)")) \
+	    (checkdoc-file f)))'
 	@$(MAKE) clean
 
 clean:
@@ -535,6 +545,17 @@ git commit -m "mrq-anchor.el 과 적합성 테이블 16건 — 세 구현을 묶
 ;;; Code:
 
 (require 'ert)
+(require 'mrq-core)
+
+(defun mrq-test-wait-for (predicate &optional seconds)
+  "PREDICATE 가 non-nil 이 될 때까지 최대 SECONDS(기본 3) 기다린다.
+
+`file-notify' 와 flymake 는 둘 다 비동기라 여러 테스트 파일이 이것을 쓴다.
+테스트 파일 사이의 로드 순서에 기대지 않도록 헬퍼에 둔다."
+  (let ((deadline (+ (float-time) (or seconds 3))))
+    (while (and (not (funcall predicate)) (< (float-time) deadline))
+      (sit-for 0.05))
+    (funcall predicate)))
 
 (defconst mrq-test-data-dir
   (expand-file-name "../../testdata/"
@@ -1002,13 +1023,6 @@ git commit -m "mrq-core.el — 탐색, review.json 읽기, schema_version 거부
 `plugin_emacs/test/mrq-core-test.el` 에 추가:
 
 ```elisp
-(defun mrq-core-test--wait-for (predicate &optional seconds)
-  "PREDICATE 가 non-nil 이 될 때까지 최대 SECONDS(기본 3) 기다린다."
-  (let ((deadline (+ (float-time) (or seconds 3))))
-    (while (and (not (funcall predicate)) (< (float-time) deadline))
-      (sit-for 0.05))
-    (funcall predicate)))
-
 (ert-deftest mrq-core-caches-until-the-file-changes ()
   (mrq-test-with-repo (root :files '(("src/api/client.py" . "x\n")))
     (let* ((dir (mrq-core-review-dir (expand-file-name "src/api/client.py" root)))
@@ -1037,7 +1051,7 @@ git commit -m "mrq-core.el — 탐색, review.json 읽기, schema_version 거부
                        (mrq-test-sample-review) t t)))
             (mrq-test-write-review root 1234 text)
             (should (cons round
-                          (mrq-core-test--wait-for (lambda () (> seen before)))))
+                          (mrq-test-wait-for (lambda () (> seen before)))))
             ;; 캐시도 실제로 버려졌는가
             (should (equal (gethash "title" (mrq-core-review dir))
                            (format "round %d" round)))))
@@ -1052,7 +1066,7 @@ git commit -m "mrq-core.el — 탐색, review.json 읽기, schema_version 거부
           (should (null (mrq-core-review dir)))     ; json 이 없다. watch 는 걸린다
           (write-region (mrq-test-sample-review) nil
                         (expand-file-name "review.json" dir) nil 'quiet)
-          (should (mrq-core-test--wait-for (lambda () (> seen 0))))
+          (should (mrq-test-wait-for (lambda () (> seen 0))))
           (should (mrq-core-review dir)))
       (mrq-core-forget-all)
       (delete-directory dir t))))
@@ -1311,6 +1325,37 @@ git commit -m "mrq-cli.el — stdout/stderr 를 분리해 돌려준다"
 **Files:**
 - Create: `plugin_emacs/mrq-flymake.el`, `plugin_emacs/test/mrq-flymake-test.el`
 
+### 필터 규칙 — 스펙에 없는 한 줄을 더한다
+
+`editor.md` §3.1 은 진단을 띄우지 않을 조건 셋만 적는다 (`location == null`,
+`stale`, 처리된 상태). **네 번째가 빠져 있다** — `review-md.md` §5 와 `cli.md` §7 은
+서버에서 resolve 됐고 `local.reply` 가 비어 있고 `state == todo` 인 스레드를
+**감춘다.** 적용하지 않으면 동료가 코멘트 다섯을 resolve 한 뒤 `review.md` 와
+`mrq list` 에서는 사라진 것이 flymake 에만 남아, 사람과 AI 가 **다른 집합을 본다**
+(`decisions/0001-human-and-ai-are-peers.md` 가 막으려는 것).
+
+| 조건 | 동작 |
+|---|---|
+| `location == null` | 진단 없음 (MUST) |
+| `confidence == "stale"` | 진단 없음 (MUST) |
+| `location.path` ≠ 이 버퍼의 리포 상대 경로 | 진단 없음 |
+| `server.resolved` 이고 `local.reply` 가 비어 있고 `state == todo` | 진단 없음 (`mrq-show-handled` 로 끈다) |
+| `local.state != "todo"` | 진단 없음 (SHOULD, `mrq-show-handled` 로 끈다) |
+| 위 전부 통과 | `:note` 진단 하나 |
+
+`mrq-show-handled` 가 non-nil 이면 **아래 두 필터를 모두 끈다** — `mrq list --all`
+과 같은 집합이다. 위 셋은 MUST 라 끄지 않는다. Task 11 이 이 줄을 §3.1 에 넣는다.
+
+`rendered.json` 의 `src/api/client.py` 스레드 셋이 세 경우를 다 덮는다:
+
+| 스레드 | state | reply | resolved | 기본 | `--all` |
+|---|---|---|---|---|---|
+| `a1b2c3d4e5f6` | todo | 없음 | 아니오 | **보인다** | 보인다 |
+| `d4e5f6a1b2c3` | done | 있음 | 예 | 숨김(처리됨) | 보인다 |
+| `e5f6a1b2c3d4` | todo | 없음 | 예 | 숨김(동료가 resolve) | 보인다 |
+
+**기본 1건, `mrq-show-handled` 로 3건.**
+
 **Interfaces:**
 - Consumes: `mrq-core-threads-for`, `mrq-core-review-dir`, `mrq-show-handled`,
   `mrq-core-refresh-functions`, `mrq-anchor-correct`
@@ -1340,24 +1385,47 @@ git commit -m "mrq-cli.el — stdout/stderr 를 분리해 돌려준다"
     (mrq-flymake-setup)
     (let ((done nil))
       (flymake-start nil t)
-      (mrq-core-test--wait-for
+      (mrq-test-wait-for
        (lambda () (setq done (not (flymake-running-backends)))))
       (should done))
     (prog1 (flymake-diagnostics)
       (kill-buffer))))
 
-;; rendered.json 의 client.py 스레드 셋:
-;;   a1b2c3d4e5f6  todo   exact   (resolved: nil)
-;;   d4e5f6a1b2c3  done   exact   (resolved: t)
-;;   e5f6a1b2c3d4  todo   exact   (resolved: t)
+;; rendered.json 의 client.py 스레드 셋 (위 표 참고):
+;;   a1b2c3d4e5f6  todo  답글없음  미resolve  -> 기본에서 보인다
+;;   d4e5f6a1b2c3  done  답글있음  resolve    -> 처리됨이라 숨김
+;;   e5f6a1b2c3d4  todo  답글없음  resolve    -> 동료가 resolve 해서 숨김
 
-(ert-deftest mrq-flymake-shows-only-todo-by-default ()
+(ert-deftest mrq-flymake-shows-only-unhandled-by-default ()
   (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
     (let ((diags (mrq-flymake-test--diagnostics
                   (expand-file-name "src/api/client.py" root))))
-      (should (= (length diags) 2))      ; todo 둘, done 하나 제외
-      (dolist (d diags)
-        (should (eq (flymake-diagnostic-type d) :note))))))
+      (should (= (length diags) 1))
+      (should (eq (flymake-diagnostic-type (car diags)) :note))
+      (should (equal (flymake-diagnostic-data (car diags)) "a1b2c3d4e5f6")))))
+
+(ert-deftest mrq-flymake-hides-a-thread-a-colleague-resolved ()
+  "Review Focus #5 — `review.md' 와 `mrq list' 가 감추는 것을 flymake 도 감춘다.
+
+`e5f6a1b2c3d4' 는 서버에서 resolve 됐고 내 미전송 작업이 없다.  띄우면 사람이
+보는 세 면이 서로 다른 집합을 보여준다 (`decisions/0001')."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+    (let ((ids (mapcar #'flymake-diagnostic-data
+                       (mrq-flymake-test--diagnostics
+                        (expand-file-name "src/api/client.py" root)))))
+      (should-not (member "e5f6a1b2c3d4" ids)))))
+
+(ert-deftest mrq-flymake-keeps-a-resolved-thread-that-has-unsent-work ()
+  "`d4e5f6a1b2c3' 는 resolve 됐지만 답글이 남아 있다 — `--all' 집합에는 있어야 한다.
+
+동료가 먼저 resolve 했을 때 내 답글이 조용히 사라지면 안 된다
+(`review-md.md' §5 의 예외와 같은 근거)."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+    (let* ((mrq-show-handled t)
+           (ids (mapcar #'flymake-diagnostic-data
+                        (mrq-flymake-test--diagnostics
+                         (expand-file-name "src/api/client.py" root)))))
+      (should (member "d4e5f6a1b2c3" ids)))))
 
 (ert-deftest mrq-flymake-shows-handled-when-asked ()
   (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
@@ -1483,8 +1551,10 @@ Expected: FAIL — `Cannot open load file: mrq-flymake`
     (when (and location
                (not (eq location :null))
                (not (equal (gethash "confidence" location) "stale"))
-               (or mrq-show-handled (equal (gethash "state" local) "todo")))
-      (let* ((line (mrq-flymake--line buffer location))
+               (or mrq-show-handled
+                   (and (equal (gethash "state" local) "todo")
+                        (mrq-flymake--mine-p thread local))))
+      (let* ((line (mrq-flymake--line buffer thread location))
              (end-line (mrq-flymake--end-line location line))
              (region (mrq-flymake--region buffer line end-line)))
         (when region
@@ -1494,17 +1564,36 @@ Expected: FAIL — `Cannot open load file: mrq-flymake`
            (gethash "id" thread)
            (list 'mrq-thread-id (gethash "id" thread))))))))
 
-(defun mrq-flymake--line (buffer location)
+(defun mrq-flymake--mine-p (thread local)
+  "THREAD 가 기본 보기에 남아야 하는가.
+
+서버에서 resolve 됐는데 내 미전송 작업이 없으면 아니다 — `review-md.md' §5 와
+`cli.md' §7 이 쓰는 것과 같은 규칙이다.  동료가 코멘트를 resolve 한 뒤에도
+진단이 남으면 `review.md'/`mrq list' 와 flymake 가 서로 다른 집합을 보여준다
+\(`decisions/0001-human-and-ai-are-peers.md')."
+  (or (not (eq (gethash "resolved" (gethash "server" thread)) t))
+      (not (string-empty-p (string-trim (or (gethash "reply" local) ""))))
+      (not (equal (gethash "state" local) "todo"))))
+
+(defun mrq-flymake--line (buffer thread location)
   "LOCATION 의 줄을 BUFFER 안에서 보정한다.
 
 보정은 **저장하지 않은 버퍼에서만** 한다 (`reanchoring.md' §6).  저장된
-버퍼의 위치는 CLI 가 git 으로 계산한 값이고, 그쪽이 언제나 더 낫다."
-  (let ((line (gethash "line" location)))
+버퍼의 위치는 CLI 가 git 으로 계산한 값이고, 그쪽이 언제나 더 낫다 — git
+diff hunk 맵과 context 점수를 쓸 수 있는 쪽은 CLI 뿐이다."
+  (let ((line (gethash "line" location))
+        (anchor (gethash "anchor" thread)))
     (with-current-buffer buffer
-      (if (not (buffer-modified-p))
+      (if (or (not (buffer-modified-p)) (null anchor) (eq anchor :null))
           line
-        (let ((anchor (gethash "anchor" (mrq-flymake--thread-of location))))
-          line)))))
+        (mrq-anchor-correct (mrq-flymake--buffer-lines)
+                            (gethash "line" anchor)
+                            line)))))
+
+(defun mrq-flymake--buffer-lines ()
+  "현재 버퍼를 1 행이 인덱스 0 인 문자열 벡터로."
+  (vconcat (split-string (buffer-substring-no-properties (point-min) (point-max))
+                         "\n")))
 
 (defun mrq-flymake--text (thread location)
   "진단 메시지 한 줄.  루트 노트의 첫 줄을 자른다."
@@ -1558,34 +1647,10 @@ Review Focus #4 — 버퍼가 줄면 `location.line' 이 버퍼 밖을 가리킨
 ;;; mrq-flymake.el ends here
 ```
 
-> **실행자 주의 — `mrq-flymake--line` 은 위 코드에 구멍이 있다.** `location` 만
-> 받아서는 그 스레드의 `anchor` 에 닿을 수 없다. 시그니처를
-> `(mrq-flymake--line BUFFER THREAD LOCATION)` 으로 바꾸고 다음을 구현하라:
->
-> ```elisp
-> (defun mrq-flymake--line (buffer thread location)
->   (let ((line (gethash "line" location))
->         (anchor (gethash "anchor" thread)))
->     (with-current-buffer buffer
->       (if (or (not (buffer-modified-p)) (null anchor) (eq anchor :null))
->           line
->         (mrq-anchor-correct (mrq-flymake--buffer-lines) 
->                             (gethash "line" anchor) line)))))
->
-> (defun mrq-flymake--buffer-lines ()
->   "현재 버퍼를 1 행이 인덱스 0 인 문자열 벡터로."
->   (vconcat (split-string (buffer-substring-no-properties (point-min) (point-max))
->                          "\n")))
-> ```
->
-> `mrq-flymake--one` 의 호출부도 함께 고친다. 이 구멍을 남겨 둔 이유는 TDD 가
-> 그것을 잡는지 확인하기 위해서다 — Step 2 의 테스트 중 clamp 테스트가 통과하고
-> 보정 테스트가 없다면 **Step 5 의 보정 테스트를 먼저 쓰고** 고쳐라.
-
 - [ ] **Step 4: 통과를 관측한다**
 
 Run: `make -C plugin_emacs test`
-Expected: `Ran 26 tests, 26 results as expected`
+Expected: `Ran 28 tests, 28 results as expected`
 
 - [ ] **Step 5: 보정이 실제로 걸리는지 테스트를 더한다**
 
@@ -1603,7 +1668,7 @@ Expected: `Ran 26 tests, 26 results as expected`
               (should (buffer-modified-p))
               (mrq-flymake-setup)
               (flymake-start nil t)
-              (mrq-core-test--wait-for (lambda () (not (flymake-running-backends))))
+              (mrq-test-wait-for (lambda () (not (flymake-running-backends))))
               (should (flymake-diagnostics)))
           (set-buffer-modified-p nil)
           (kill-buffer))))))
@@ -1623,7 +1688,7 @@ Expected: `Ran 26 tests, 26 results as expected`
 > 만들어라. 값을 추측하지 마라.
 
 Run: `make -C plugin_emacs test`
-Expected: `Ran 28 tests, 28 results as expected`
+Expected: `Ran 30 tests, 30 results as expected`
 
 - [ ] **Step 6: Commit**
 
@@ -1881,7 +1946,7 @@ Expected: FAIL — `Cannot open load file: mrq-mode`
 - [ ] **Step 4: 통과를 관측한다**
 
 Run: `make -C plugin_emacs test`
-Expected: `Ran 37 tests, 37 results as expected`
+Expected: `Ran 39 tests, 39 results as expected`
 
 - [ ] **Step 5: Commit**
 
@@ -2194,7 +2259,7 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
 - [ ] **Step 4: 통과를 관측한다**
 
 Run: `make -C plugin_emacs test`
-Expected: `Ran 42 tests, 42 results as expected`
+Expected: `Ran 44 tests, 44 results as expected`
 
 - [ ] **Step 5: Commit**
 
@@ -2554,7 +2619,7 @@ Expected: FAIL — `Cannot open load file: mrq-conflict`
 - [ ] **Step 4: 통과를 관측한다**
 
 Run: `make -C plugin_emacs test`
-Expected: `Ran 47 tests, 47 results as expected`
+Expected: `Ran 49 tests, 49 results as expected`
 
 - [ ] **Step 5: Commit**
 
@@ -2667,9 +2732,10 @@ git commit -m "mrq-conflict.el — 선택을 모아 한 번의 sync 로 보낸�
             (progn
               (mrq-setup)
               (flymake-start nil t)
-              (mrq-core-test--wait-for (lambda () (not (flymake-running-backends))))
+              (mrq-test-wait-for (lambda () (not (flymake-running-backends))))
               (goto-char (point-min))
-              (forward-line (1- (flymake-diagnostic-beg-line (car (flymake-diagnostics)))))
+              (forward-line (1- (line-number-at-pos
+                                 (flymake-diagnostic-beg (car (flymake-diagnostics))))))
               (mrq-reply-at-point)
               (should (equal (file-name-nondirectory (buffer-file-name)) "review.md"))
               (should (save-excursion
@@ -2691,10 +2757,6 @@ git commit -m "mrq-conflict.el — 선택을 모아 한 번의 sync 로 보낸�
           (should-error (mrq-reply-at-point) :type 'user-error)
         (kill-buffer)))))
 ```
-
-> **실행자 주의:** `flymake-diagnostic-beg-line` 은 없는 함수다. 진단의 시작
-> 위치에서 줄을 구하려면 `(line-number-at-pos (flymake-diagnostic-beg d))` 를
-> 쓴다. 위 테스트를 그렇게 고쳐라.
 
 - [ ] **Step 3: 실패를 관측한다**
 
@@ -2781,7 +2843,7 @@ md 에서 값을 읽는 경로는 없고, md -> json 변환은 `mrq sync' 하나
 - [ ] **Step 5: 통과를 관측한다**
 
 Run: `make -C plugin_emacs test && make -C plugin_emacs lint`
-Expected: `Ran 53 tests, 53 results as expected`, lint 0
+Expected: `Ran 55 tests, 55 results as expected`, lint 0
 
 경계 테스트 넷 중 하나라도 빨가면 **그 파일을 고쳐라** — 테스트를 완화하지 마라.
 
@@ -2851,6 +2913,18 @@ git commit -m "mrq.el 진입점, mrq-reply-at-point, 경계 메타 테스트"
   **첫 쓰기 이후 조용히 죽는다** — 처음 한 번은 알림이 오고 그 뒤로 영영 안 온다.
   디렉터리 watch 는 그 교체를 잡고, 덤으로 첫 `pull` 이 json 을 만드는 순간도 잡는다.
   테스트는 **두 번 이상 연속으로** 고쳐야 이 결함을 본다
+```
+
+§3.1 의 "기본적으로 `local.state == \"todo\"`만 표시한다" 불릿 **아래**에
+한 줄을 더한다:
+
+```markdown
+- **서버에서 resolve 됐고 미전송 작업이 없는 스레드는 표시하지 않는다**
+  (`review-md.md` §5 와 같은 규칙). `mrq-show-handled` 가 이 필터와 위의 상태
+  필터를 함께 끈다 — `mrq list --all` 과 같은 집합이 된다. 이 규칙이 없으면
+  동료가 코멘트를 resolve 한 뒤 `review.md`·`mrq list` 에서는 사라진 것이
+  flymake 에만 남아, 사람과 AI 가 다른 집합을 본다
+  (`decisions/0001-human-and-ai-are-peers.md`)
 ```
 
 §3.2 의 코드 블록 아래에 더한다:
@@ -3081,7 +3155,7 @@ git commit -m "계획 4 완료 — 스펙 반영, 실측 체크리스트, 계획
 
 ## 완료 조건
 
-- [ ] `make test` 전부 통과 (cli 523+ · emacs 53+)
+- [ ] `make test` 전부 통과 (cli 525+ · emacs 55+)
 - [ ] `make lint` 경고 0 (ruff + byte-compile-error-on-warn + checkdoc)
 - [ ] `make conformance` 16건 통과
 - [ ] `mrq-boundary-test.el` 넷 통과 — `editor.md` §1 이 코드 모양으로 고정됨
