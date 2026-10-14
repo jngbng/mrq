@@ -49,7 +49,7 @@
 ;; 내용을 최상위에서 채우는 이유는 `mrq.el' 의 같은 자리와 같다 — `defvar' 가
 ;; 재평가에서 초기화 폼을 건너뛰므로, 키맵을 초기값으로 만들면 재로드가
 ;; 반영되지 않는다.
-(define-key mrq-mode-map (kbd "RET") #'mrq-mode-visit)
+(define-key mrq-mode-map (kbd "RET") #'mrq-mode-visit-or-newline)
 (define-key mrq-mode-map (kbd "C-c C-t") #'mrq-mode-toggle-state)
 (define-key mrq-mode-map (kbd "C-c C-s") #'mrq-mode-sync)
 (define-key mrq-mode-map (kbd "C-c C-p") #'mrq-mode-push)
@@ -90,6 +90,19 @@
     (when (looking-at mrq-mode-header-re)
       (cons (match-string-no-properties 1)
             (string-to-number (match-string-no-properties 2))))))
+
+(defun mrq-mode-visit-or-newline ()
+  "헤더 줄이면 소스로 가고, 아니면 평소대로 줄을 바꾼다.
+
+`RET' 를 무조건 점프에 묶으면 **답글에서 줄을 바꿀 수 없다** — 이 버퍼는
+`markdown-mode' 파생의 편집면이고 `RET' 는 거기서 가장 흔한 키다.  헤더 줄은
+애초에 타이핑하는 자리가 아니고 거기서 줄을 쪼개면 `sync' 가 깨지므로,
+그 한 줄에서만 점프한다."
+  (interactive)
+  (if (save-excursion (beginning-of-line) (looking-at mrq-mode-header-re))
+      (mrq-mode-visit)
+    (let ((fallback (or (lookup-key markdown-mode-map (kbd "RET")) #'newline)))
+      (call-interactively fallback))))
 
 (defun mrq-mode-visit ()
   "point 의 스레드가 가리키는 소스 위치로 이동한다."

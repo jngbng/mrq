@@ -524,5 +524,31 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
     (should (eq mrq-minor-mode-map minor-map))
     (should (eq (lookup-key mrq-minor-mode-map (kbd "C-c m")) mrq-command-map))))
 
+(ert-deftest mrq-mode-ret-inserts-a-newline-in-the-reply-area ()
+  "`review.md' 는 답글을 쓰는 편집면이다 — `RET' 로 줄을 바꿀 수 있어야 한다.
+
+`g'/`r' 과 같은 종류의 실수이고 더 흔하다.  헤더 줄에서만 소스로 점프한다."
+  (with-temp-buffer
+    (insert mrq-mode-test--md)
+    (delay-mode-hooks (mrq-mode))
+    (goto-char (point-min))
+    (search-forward "### reply")
+    (forward-line 1)
+    (let ((before (line-number-at-pos)))
+      (call-interactively (key-binding (kbd "RET")))
+      (should (> (line-number-at-pos) before)))))
+
+(ert-deftest mrq-mode-ret-visits-the-source-on-a-header-line ()
+  "헤더 줄에서는 그대로 소스로 간다 (`editor.md' §3.2)."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\n")))
+    (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+      (goto-char (point-min))
+      (search-forward "## [ ] src/api/client.py:2")
+      (beginning-of-line)
+      (call-interactively (key-binding (kbd "RET")))
+      (should (equal (file-truename (buffer-file-name))
+                     (file-truename (expand-file-name "src/api/client.py" root))))
+      (should (= (line-number-at-pos) 2)))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here
