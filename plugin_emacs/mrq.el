@@ -41,6 +41,23 @@
     map)
   "소스 버퍼에서 `C-c m' 뒤에 오는 키들.")
 
+(defvar mrq-minor-mode-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "C-c m") mrq-command-map)
+    map)
+  "`mrq-minor-mode' 의 키맵.")
+
+;;;###autoload
+(define-minor-mode mrq-minor-mode
+  "소스 버퍼에서 MR 코멘트를 다루는 키들.
+
+마이너 모드로 두는 이유는 `local-set-key' 가 현재 로컬 맵을 **그 자리에서**
+고치기 때문이다 — 그 맵이 곧 메이저 모드 맵이라, `prog-mode-hook' 에서 한 번
+부르면 그 세션의 모든 같은 모드 버퍼(리뷰와 무관한 다른 프로젝트 포함)가
+오염된다."
+  :lighter " mrq"
+  :keymap mrq-minor-mode-map)
+
 ;;;###autoload
 (defun mrq-setup ()
   "이 버퍼에 mrq 를 켠다.  리뷰가 없는 리포면 아무것도 하지 않는다.
@@ -51,7 +68,7 @@
     (require 'mrq-flymake)
     (require 'mrq-mode)
     (mrq-flymake-setup)
-    (local-set-key (kbd "C-c m") mrq-command-map)))
+    (mrq-minor-mode 1)))
 
 (provide 'mrq)
 ;;; mrq.el ends here

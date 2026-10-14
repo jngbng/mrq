@@ -58,14 +58,19 @@
                          (expand-file-name "src/api/client.py" root))))))
 
 (ert-deftest mrq-flymake-keeps-a-resolved-thread-that-has-unsent-work ()
-  "`d4e5f6a1b2c3' 는 resolve 됐지만 답글이 남아 있다 — `--all' 집합에는 있다.
+  "동료가 먼저 resolve 했을 때 **내 미전송 답글이 사라지면 안 된다**
+\(`review-md.md' §5 의 예외와 같은 근거).
 
-동료가 먼저 resolve 했을 때 내 답글이 조용히 사라지면 안 된다
-\(`review-md.md' §5 의 예외와 같은 근거)."
-  (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
-                                           (mrq-flymake-test--lines 320))))
-    (let ((mrq-show-handled t))
-      (should (member "d4e5f6a1b2c3"
+`mrq-show-handled' 를 켜고 보면 안 된다 — 그러면 어차피 전부 보이므로 이
+가지를 지워도 통과한다.  `e5f6a1b2c3d4'(todo + resolved + 답글 없음)에 답글만
+넣어 **기본 보기**에서 확인한다."
+  (let ((text (replace-regexp-in-string
+               "\"id\": \"e5f6a1b2c3d4\"" "\"id\": \"e5f6a1b2c3d4\"" 
+               (mrq-flymake-test--with-reply "e5f6a1b2c3d4" "아직 안 보낸 답글") t t)))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/client.py"
+                                                 (mrq-flymake-test--lines 320))))
+      (should (member "e5f6a1b2c3d4"
                       (mrq-flymake-test--ids
                        (expand-file-name "src/api/client.py" root)))))))
 
@@ -209,6 +214,14 @@ span 을 그렇게 잃는다."
     (dotimes (i (+ at 5))
       (push (if (= (1+ i) at) text "pass") lines))
     (concat (string-join (nreverse lines) "\n") "\n")))
+
+(defun mrq-flymake-test--with-reply (id reply)
+  "ID 스레드의 `local.reply' 에 REPLY 를 넣은 `review.json' 문자열."
+  (let* ((review (json-parse-string (mrq-test-sample-review)))
+         (thread (seq-find (lambda (th) (equal (gethash "id" th) id))
+                           (gethash "threads" review))))
+    (puthash "reply" reply (gethash "local" thread))
+    (json-serialize review)))
 
 (defun mrq-flymake-test--with-twin ()
   "`f6a1b2c3d4e5' 를 같은 위치에 복제한 `review.json' 문자열.

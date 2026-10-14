@@ -124,6 +124,8 @@ stdout/stderr/종료 코드를 낸다.
      (concat "#!/bin/sh\n"
              "printf '%s\\n' \"$*\" >> " (shell-quote-argument
                                           (expand-file-name "calls.txt" root)) "\n"
+             "pwd >> " (shell-quote-argument
+                        (expand-file-name "cwd.txt" root)) "\n"
              "cat > " (shell-quote-argument
                        (expand-file-name "stdin.txt" root)) "\n"
              (if writes
@@ -144,6 +146,15 @@ stdout/stderr/종료 코드를 낸다.
       (split-string (with-temp-buffer
                       (insert-file-contents log)
                       (buffer-string))
+                    "\n" t))))
+
+(defun mrq-test-cli-cwds (root)
+  "가짜 `mrq' 가 돈 작업 디렉터리들.
+
+CLI 는 cwd 에서 리포를 찾으므로(`store.py') 이것이 틀리면 엉뚱한 리포를 본다."
+  (let ((log (expand-file-name "cwd.txt" root)))
+    (when (file-exists-p log)
+      (split-string (with-temp-buffer (insert-file-contents log) (buffer-string))
                     "\n" t))))
 
 (defun mrq-test-cli-stdin (root)

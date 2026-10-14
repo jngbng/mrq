@@ -56,7 +56,9 @@
   "이 버퍼가 속한 리포 루트.  `current' 와 달리 세션 중에 바뀌지 않는다.")
 
 (defun mrq-core-root (&optional file)
-  "FILE(기본 `buffer-file-name')이 속한 리포 루트.  없으면 nil.
+  "FILE 이 속한 리포 루트.  없으면 nil.
+
+FILE 을 주지 않으면 이 버퍼가 방문 중인 파일을 쓴다.
 
 성공만 버퍼 로컬에 기억한다.  실패를 기억하면 `mrq pull' 전에 열어 둔 버퍼가
 영원히 죽는다 — 탐색은 `file-exists-p' 몇 번이라 매번 해도 싸다."
@@ -184,13 +186,23 @@ flymake 가 편집 중 반복 호출되므로 매번 내면 미니버퍼를 못 
 
 해제하지 않는다 — 상한이 \"이 세션에서 건드린 MR 수\" 라 누수가 아니고,
 버퍼 단위로 걸고 풀면 `kill-buffer' 경로가 전부 샌다."
-  (unless (gethash dir mrq-core--watches)
+  (unless (mrq-core--watch-live-p (gethash dir mrq-core--watches))
+    (remhash dir mrq-core--watches)
     (when (file-directory-p dir)
       (puthash dir
                (file-notify-add-watch
                 dir '(change)
                 (lambda (event) (mrq-core--on-change dir event)))
                mrq-core--watches))))
+
+(defun mrq-core--watch-live-p (descriptor)
+  "DESCRIPTOR 가 아직 살아 있는가.
+
+디렉터리가 사라지면(`mrq clean') Emacs 는 디스크립터를 버리는데 우리 해시에는
+죽은 항목이 남는다.  그것을 \"이미 감시 중\" 으로 보면 같은 iid 를 다시
+`pull' 한 뒤 그 세션의 열린 버퍼가 **이후 모든 갱신을 놓친다** — §1-5 MUST 가
+조용히 깨진 채로 남는 가장 나쁜 양상이다."
+  (and descriptor (file-notify-valid-p descriptor)))
 
 (defun mrq-core--on-change (dir event)
   "DIR 의 EVENT 가 `review.json' 에 대한 것이면 캐시를 버리고 진단을 갱신한다."

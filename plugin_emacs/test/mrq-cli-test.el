@@ -59,11 +59,17 @@
       (should (equal (mrq-test-cli-calls root) '("reply a1b2 -F -"))))))
 
 (ert-deftest mrq-cli-runs-in-the-given-directory ()
+  "CLI 는 cwd 에서 리포를 찾는다 (`store.py').
+
+DIR 을 무시하면 리포 밖 `default-directory' 를 가진 버퍼에서 엉뚱한 리포를
+보거나 실패한다 — 호출 기록만 보면 그것이 드러나지 않는다."
   (mrq-test-with-repo (root)
     (let* ((mrq-executable (mrq-test-fake-cli root))
            (default-directory temporary-file-directory))
       (mrq-cli-run '("status" "--json") nil root)
-      (should (equal (mrq-test-cli-calls root) '("status --json"))))))
+      (should (equal (mrq-test-cli-calls root) '("status --json")))
+      (should (equal (mapcar #'file-truename (mrq-test-cli-cwds root))
+                     (list (file-truename root)))))))
 
 (ert-deftest mrq-cli-reports-a-missing-executable-without-signalling ()
   "`mrq-executable' 이 PATH 에 없을 때 편집을 막으면 안 된다."

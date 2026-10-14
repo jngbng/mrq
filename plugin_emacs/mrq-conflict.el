@@ -18,6 +18,10 @@
 (require 'mrq-cli)
 (require 'mrq-core)
 
+;; 해소 뒤 `review.md' 버퍼를 되읽을 때만 쓴다 — 서로 지연 require 라
+;; 로드 순환이 없다.
+(declare-function mrq-mode--revert-keeping-thread "mrq-mode")
+
 (defconst mrq-conflict-buffer-name "*mrq conflicts*"
   "충돌 해소 버퍼의 이름.")
 
@@ -190,6 +194,18 @@
                     (list "--prefer" (format "%s=%s" (nth 0 entry) (nth 1 entry))))
                   mrq-conflict--entries)))
 
+(defun mrq-conflict--reread-review-md ()
+  "해소가 반영된 `review.md' 를 열려 있는 버퍼에 되읽는다.
+
+안 하면 사용자는 **거부당한 md 쪽 내용**을 계속 보고, 다음 저장에서 같은
+충돌이 그대로 다시 올라와 선택이 무의미해진다."
+  (let* ((md (and mrq-conflict--dir (expand-file-name "review.md" mrq-conflict--dir)))
+         (buffer (and md (find-buffer-visiting md))))
+    (when buffer
+      (require 'mrq-mode)
+      (with-current-buffer buffer
+        (mrq-mode--revert-keeping-thread)))))
+
 (defun mrq-conflict--close ()
   "충돌 버퍼를 닫는다.
 
@@ -215,6 +231,7 @@ batch 에서 죽는다."
     (if (= (plist-get result :code) 0)
         (progn
           (message "충돌 %d건을 해소했습니다" (length mrq-conflict--entries))
+          (mrq-conflict--reread-review-md)
           (mrq-conflict--close))
       ;; 창을 닫지 않는다 — 닫으면 사용자가 선택을 처음부터 다시 해야 한다.
       (message "mrq sync 실패 (exit %d): %s"

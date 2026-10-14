@@ -31,11 +31,15 @@ Python CLI, `mrq.el`, VSCode 확장이 같은 데이터를 다룬다. 다음 다
 7. **`testdata/conformance/anchor.json`을 통과해야 한다**(MUST). 3번의 보정 로직이
    세 구현에서 같게 동작하는지를 강제하는 유일한 장치다 (`repo-layout.md` §4.1)
 
-**1번의 경계.** `review.md`에서 **점(point)을 옮기기 위한 검색**은 파싱이 아니다.
-금지되는 것은 md에서 `local.state` / `local.reply`를 **추출하는 것**이다 — 그 값을
-읽는 경로는 `review.json` 하나이고, md → json 변환은 `mrq sync` 하나다. 점 이동이
-틀리면 커서가 엉뚱한 데 가고 사용자가 즉시 보지만, 값 추출이 틀리면 답글이 조용히
-사라진다.
+**1번의 경계.** `review.md`에서 **점(point)을 옮기고 화면을 그리기 위한 검색**은
+파싱이 아니다. 금지되는 것은 **md에서 읽은 값으로 `review.json`·전송·상태를 바꾸는
+것**이다 — 그 값을 읽는 경로는 `review.json` 하나이고, md → json 변환은 `mrq sync`
+하나다. 점 이동이 틀리면 커서가 엉뚱한 데 가고 사용자가 즉시 보지만, 값이 쓰기
+경로로 들어가면 답글이 조용히 사라진다.
+
+그래서 헤더에서 `path`와 `line`을 읽어 `RET`으로 점프하는 것은 **허용된다**
+(§3.2가 요구한다). `local.state`/`local.reply`를 읽어 어딘가에 반영하는 것은
+금지된다.
 
 그 경계가 실제로 묶는 것 둘:
 
@@ -139,8 +143,22 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 | `C-c C-t` | 체크박스 토글 `[ ]` → `[x]` → `[~]` → `[-]` |
 | `C-c C-s` | `mrq sync` |
 | `C-c C-p` | `mrq push` (`status` 요약을 보여주고 확인) |
-| `g` | `mrq pull` 후 버퍼 되읽기 |
-| `r` | `mrq reanchor` |
+| `C-c C-g` | `mrq pull` 후 버퍼 되읽기 |
+| `C-c C-r` | `mrq reanchor` |
+
+**평문 키를 명령에 묶지 않는다**(MUST NOT). 이 버퍼는 `markdown-mode` 파생의
+**편집면**이고 답글을 여기서 쓴다 — `g`/`r`을 묶으면 "retry 로직을 고쳤습니다"의
+첫 글자가 `mrq reanchor`를 돌린다. 목록 버퍼라는 이름 때문에 magit류 읽기 전용
+버퍼를 가정하기 쉬운데, 그렇지 않다.
+
+**md 를 다시 쓰는 명령은 미저장 편집 위에서 거부한다**(MUST). `pull`·`reanchor`·
+`push`가 그렇다. `sync`는 거부 대신 **저장한다** — `sync`는 디스크의 md를 읽으므로
+저장하지 않고 부르면 CLI가 옛 내용을 반영하고 재렌더가 작성 중인 답글을 덮어쓴다.
+
+**버퍼의 리뷰 디렉터리가 `.mrq/current`가 아니면 거부한다**(MUST). `sync`에는
+`--mr`이 없으므로(`cli.md` §1), `.mrq/3/review.md`를 열어 둔 채 저장하면 `current`가
+가리키는 **다른 MR**이 sync 된다 — MR 3의 답글은 디스크에만 남고 다음 재렌더에
+사라진다.
 
 소스 버퍼에서는 `C-c m r`이 `mrq-reply-at-point` — `review.md`를 열어 해당 스레드의
 `### reply` 섹션으로 점프한다. 답글은 md에서 작성한다. 소스 ↔ 목록 왕복이 이것으로
@@ -209,8 +227,14 @@ ERT로 검증한다. `make test-emacs`가 `plugin_emacs/test/*-test.el` 전부�
 | `mrq-boundary-test.el` | §1의 경계를 코드 모양으로 — json 파싱·쓰기·git·프로세스가 어느 파일에 있는지 |
 
 `make lint`은 `byte-compile-error-on-warn t`로 바이트컴파일하고 `checkdoc`를
-돌린다. elisp에서 가장 싼 방어다 — 오타, 잘못된 인자 수, 쓰이지 않는 변수,
-지연 `require`의 미선언 참조를 전부 여기서 잡는다.
+돌린다. **둘 다 종료 코드를 바꾼다**(MUST) — elisp에서 가장 싼 방어이고, 오타,
+잘못된 인자 수, 쓰이지 않는 변수, 지연 `require`의 미선언 참조를 전부 여기서 잡는다.
+
+`checkdoc-file`은 경고를 찍기만 하고 종료 코드를 바꾸지 않으므로
+`plugin_emacs/tools/checkdoc-gate.el`이 그 출력을 가로채 실패시킨다. 대소문자 규칙
+둘("first line should be capitalized", "messages should start with a capital
+letter")은 거른다 — 독스트링과 메시지가 한국어라 적용될 수 없고, 그것 때문에
+나머지 진짜 경고를 못 쓰게 되는 쪽이 나쁘다.
 
 **batch에서 비동기를 기다릴 때 두 가지를 주의한다**(실측):
 

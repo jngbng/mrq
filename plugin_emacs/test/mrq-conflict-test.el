@@ -135,5 +135,26 @@
         (mrq-conflict-apply)
         (should (get-buffer mrq-conflict-buffer-name))))))
 
+(ert-deftest mrq-conflict-apply-rereads-the-review-md-buffer ()
+  "해소 뒤 `review.md' 버퍼가 낡은 채로 남으면 선택이 무의미해진다.
+
+사용자는 **거부당한 md 쪽 내용**을 계속 보게 되고, 다음 저장에서 같은 충돌이
+그대로 다시 올라온다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+           (resolved "<!-- mrq:a1b2c3d4e5f6 v:999999 -->\n## [~] src/api/client.py:2 — @jdoe\n\n### reply\n\nAI 쪽이 채택됐습니다\n")
+           (mrq-executable (mrq-test-fake-cli root
+                                              :stdout "{\"iid\":1234,\"applied\":[]}"
+                                              :writes (cons md resolved))))
+      (write-region "<!-- mrq:a1b2c3d4e5f6 v:000002 -->\n## [x] src/api/client.py:2 — @jdoe\n\n### reply\n\n내가 쓴 md 쪽\n"
+                    nil md nil 'quiet)
+      (with-current-buffer (find-file-noselect md)
+        (should (string-match-p "내가 쓴 md 쪽" (buffer-string)))
+        (mrq-conflict-test--with-buffer root
+          (mrq-conflict-choose-all-json)
+          (mrq-conflict-apply))
+        (should (string-match-p "AI 쪽이 채택됐습니다" (buffer-string)))
+        (should-not (string-match-p "내가 쓴 md 쪽" (buffer-string)))))))
+
 (provide 'mrq-conflict-test)
 ;;; mrq-conflict-test.el ends here

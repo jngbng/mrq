@@ -12,6 +12,7 @@
 (require 'mrq)
 (require 'mrq-mode)
 (require 'mrq-test-helper)
+(require 'python)
 
 (defconst mrq-mode-test--md
   (concat "<!-- mrq:7a0b1c2d3e4f v:000001 -->\n"
@@ -361,6 +362,126 @@
             (should-not (bound-and-true-p flymake-mode))
             (kill-buffer)))
       (delete-directory dir t))))
+
+;;; 편집면 안전 — C1·C2·I9
+
+(ert-deftest mrq-mode-plain-letters-insert-themselves ()
+  "`review.md' 는 답글을 쓰는 **편집 버퍼**다.
+
+평문 `r'/`g' 를 명령에 묶으면 \"retry 로직을 고쳤습니다\" 의 첫 글자가
+`mrq reanchor' 를 돌린다."
+  (with-temp-buffer
+    (delay-mode-hooks (mrq-mode))
+    (dolist (key '("r" "g" "m" "j" "n" "p" "q"))
+      (should (eq (key-binding (kbd key)) #'self-insert-command)))))
+
+(ert-deftest mrq-mode-sync-saves-first-instead-of-discarding-edits ()
+  "`C-c C-s' 가 미저장 답글을 버리면 안 된다.
+
+`sync' 는 **디스크의 md** 를 읽으므로, 저장하지 않고 부르면 CLI 가 옛 내용을
+반영하고 재렌더가 작성 중인 답글을 덮어쓴다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "작성 중인 답글\n")
+        (should (buffer-modified-p))
+        (mrq-mode-sync)
+        (should (string-match-p "작성 중인 답글" (buffer-string)))
+        (should-not (buffer-modified-p))
+        ;; 저장이 저장 훅을 통해 sync 를 한 번만 돌렸다
+        (should (equal (mrq-test-cli-calls root) '("sync --json")))))))
+
+(ert-deftest mrq-mode-reanchor-refuses-while-the-buffer-is-modified ()
+  "`reanchor' 와 `pull' 은 md 를 다시 쓴다 — 미저장 편집 위에 돌리면 지워진다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "작성 중인 답글\n")
+        (should-error (mrq-mode-reanchor) :type 'user-error)
+        (should-error (mrq-mode-pull) :type 'user-error)
+        (should-error (mrq-mode-push) :type 'user-error)
+        (should (string-match-p "작성 중인 답글" (buffer-string)))
+        (should (null (mrq-test-cli-calls root)))
+        (set-buffer-modified-p nil)))))
+
+(ert-deftest mrq-mode-refuses-to-sync-a-review-md-that-is-not-current ()
+  "`sync' 에는 `--mr' 이 없다 (`cli.md' §1).
+
+`.mrq/3/review.md' 를 저장하면 `current' 가 가리키는 **다른 MR** 이 sync 된다 —
+MR 3 의 답글은 디스크에만 남고 다음 재렌더에 사라진다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((other (expand-file-name ".mrq/3" root))
+          (mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (make-directory other t)
+      (write-region (mrq-test-sample-review) nil
+                    (expand-file-name "review.json" other) nil 'quiet)
+      (write-region mrq-mode-test--md nil
+                    (expand-file-name "review.md" other) nil 'quiet)
+      (with-current-buffer (find-file-noselect (expand-file-name "review.md" other))
+        (should (eq major-mode 'mrq-mode))
+        (goto-char (point-max))
+        (insert "MR 3 에 쓴 답글\n")
+        (should-error (save-buffer) :type 'user-error)
+        (should (null (mrq-test-cli-calls root)))
+        (set-buffer-modified-p nil)))))
+
+(ert-deftest mrq-mode-push-prompt-shows-the-status-summary ()
+  "되돌릴 수 없는 전송을 검토면 없이 승인하게 하면 안 된다.
+
+`status --json' 의 요약은 **stdout** 으로 나온다 (`cli.md' §2) — stderr 를
+프롬프트에 붙이면 빈 문자열이 뜬다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli
+            root
+            :stdout (concat "{\"iid\":1234,\"push\":{\"replies\":4,\"resolves\":3,"
+                            "\"skipped\":1},\"anchors\":{\"exact\":12,\"fuzzy\":2,"
+                            "\"stale\":1}}")))
+          (prompt nil))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (cl-letf (((symbol-function 'yes-or-no-p)
+                   (lambda (text) (setq prompt text) nil)))
+          (mrq-mode-push))
+        (should (string-match-p "4" prompt))
+        (should (string-match-p "3" prompt))))))
+
+(ert-deftest mrq-setup-does-not-pollute-the-major-mode-map ()
+  "`local-set-key' 는 현재 로컬 맵을 **그 자리에서** 고친다 — 그 맵이 곧
+메이저 모드 맵이다.
+
+`prog-mode-hook' 에 걸고 리뷰 리포의 .py 를 한 번 열면, 그 세션의 **모든**
+python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 mrq 에 묶인다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (mrq-setup)
+      (should (eq (key-binding (kbd "C-c m r")) #'mrq-reply-at-point)))
+    ;; 같은 메이저 모드의 무관한 버퍼
+    (with-temp-buffer
+      (delay-mode-hooks (python-mode))
+      (should-not (eq (key-binding (kbd "C-c m r")) #'mrq-reply-at-point)))))
+
+(ert-deftest mrq-flymake-refresh-actually-updates-an-open-buffer ()
+  "§1-5 MUST 의 end-to-end — AI 가 `mrq reply' 로 json 을 고치는 동안
+사용자의 버퍼가 갱신돼야 한다.
+
+훅이 불렸는지만 보면 `mrq-flymake-refresh' 의 버퍼 선별(truename 정규화 포함)이
+틀려도 통과한다."
+  (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
+                                               (mrq-flymake-test--lines 320))))
+    (let ((file (expand-file-name "src/api/client.py" root)))
+      (with-current-buffer (find-file-noselect file)
+        (mrq-flymake-setup)
+        (flymake-start nil t)
+        (should (= (length (flymake-diagnostics)) 1))
+        ;; AI 가 그 스레드를 처리한 것처럼 json 을 바꾼다 -> 기본 보기에서 사라진다
+        (mrq-test-write-review
+         root 1234
+         (replace-regexp-in-string
+          "\"state\": \"todo\"" "\"state\": \"done\"" (mrq-test-sample-review) t t))
+        (should (mrq-test-wait-for (lambda () (null (flymake-diagnostics)))))))))
 
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

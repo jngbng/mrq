@@ -36,7 +36,7 @@
                  (insert-file-contents mrq-anchor-test--table)
                  (goto-char (point-min))
                  (json-parse-buffer :array-type 'list))))
-    (should (= (length cases) 16))
+    (should (= (length cases) 17))
     (dolist (case cases)
       (let* ((name (gethash "name" case))
              (lines (mrq-anchor-test--expand case))

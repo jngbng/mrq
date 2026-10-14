@@ -41,6 +41,8 @@
 (defun mrq-flymake--one (buffer thread)
   "THREAD 하나를 BUFFER 의 진단으로.  띄우지 않을 조건이면 nil.
 
+LOCAL 은 THREAD 의 `local' 해시테이블이다.
+
 띄우지 않는 조건 넷 — `location' 이 없다(MUST, `mrq-core-threads-for' 가 이미
 걸렀다), `confidence' 가 `stale' 이다(MUST), 처리된 상태다(SHOULD), 서버에서
 resolve 됐고 내 미전송 작업이 없다.
@@ -68,7 +70,7 @@ resolve 됐고 내 미전송 작업이 없다.
            (list (cons 'mrq-thread-id (gethash "id" thread)))))))))
 
 (defun mrq-flymake--pending-p (thread local)
-  "THREAD 가 기본 보기에 남아야 하는가.
+  "THREAD(그 `local' 부분이 LOCAL)가 기본 보기에 남아야 하는가.
 
 서버에서 resolve 됐는데 내 미전송 작업이 없으면 아니다 — `review-md.md' §5 와
 `cli.md' §7 이 쓰는 것과 같은 규칙이다.  동료가 코멘트를 resolve 한 뒤에도
@@ -79,7 +81,7 @@ resolve 됐고 내 미전송 작업이 없다.
       (not (equal (gethash "state" local) "todo"))))
 
 (defun mrq-flymake--line (buffer thread location)
-  "LOCATION 의 줄을 BUFFER 안에서 보정한다.
+  "THREAD 의 LOCATION 이 가리키는 줄을 BUFFER 안에서 보정한다.
 
 보정은 **저장하지 않은 버퍼에서만** 한다 (`reanchoring.md' §6).  저장된
 버퍼의 위치는 CLI 가 git 으로 계산한 값이고 그쪽이 언제나 더 낫다 — git diff
@@ -99,7 +101,7 @@ hunk 맵과 context 점수를 쓸 수 있는 쪽은 CLI 뿐이다."
                          "\n")))
 
 (defun mrq-flymake--end-line (location line)
-  "보정 delta 를 반영한 끝 줄.  `line_end' 가 없으면 LINE.
+  "LOCATION 의 끝 줄에 보정 delta 를 반영한다.  `line_end' 가 없으면 LINE.
 
 멀티라인 코멘트의 span 을 잃지 않는다 — 보정이 `d' 줄 옮기면 끝 줄도 같은
 `d' 만큼 옮긴다."
@@ -131,7 +133,9 @@ hunk 맵과 context 점수를 쓸 수 있는 쪽은 CLI 뿐이다."
             (if tail (cons (car head) (cdr tail)) head)))))))
 
 (defun mrq-flymake--text (thread location)
-  "진단 메시지 한 줄.  루트 노트의 첫 줄을 자른다."
+  "THREAD 의 진단 메시지를 한 줄로 만든다.
+
+루트 노트의 첫 줄을 자르고 LOCATION 으로 `[fuzzy]' 여부를 정한다."
   (let* ((root (car (gethash "notes" thread)))
          (author (and root (gethash "author" root)))
          (body (or (and root (gethash "body" root)) ""))

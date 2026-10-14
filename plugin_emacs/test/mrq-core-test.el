@@ -163,5 +163,33 @@
       (mrq-core-forget-all)
       (delete-directory dir t))))
 
+(ert-deftest mrq-core-rewatches-a-recreated-review-dir ()
+  "`mrq clean' 뒤 다시 `pull' 하면 watch 가 되살아나야 한다.
+
+디렉터리가 사라지면 Emacs 는 디스크립터를 버리는데, 우리 해시에 죽은 항목이
+남으면 재등록을 건너뛴다 — 그 세션의 열린 버퍼가 **이후 모든 갱신을 놓친다.**
+§1-5 MUST 가 조용히 깨진 채로 남는 가장 나쁜 양상이다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "x\n")))
+    (let* ((file (expand-file-name "src/api/client.py" root))
+           (dir (mrq-core-review-dir file))
+           (seen 0))
+      (let ((mrq-core-refresh-functions (list (lambda (_) (setq seen (1+ seen))))))
+        (mrq-core-review dir)
+        ;; mrq clean: 디렉터리가 통째로 사라진다
+        (delete-directory (directory-file-name dir) t)
+        (should (mrq-test-wait-for (lambda () (> seen 0))))
+        ;; mrq pull: 같은 iid 가 다시 생긴다
+        (make-directory dir t)
+        (write-region (mrq-test-sample-review) nil
+                      (expand-file-name "review.json" dir) nil 'quiet)
+        (mrq-core-review dir)                     ; 여기서 재등록돼야 한다
+        (let ((before seen))
+          (mrq-test-write-review
+           root 1234
+           (replace-regexp-in-string "\"title\": \"[^\"]*\"" "\"title\": \"다시\""
+                                     (mrq-test-sample-review) t t))
+          (should (mrq-test-wait-for (lambda () (> seen before))))
+          (should (equal (gethash "title" (mrq-core-review dir)) "다시")))))))
+
 (provide 'mrq-core-test)
 ;;; mrq-core-test.el ends here

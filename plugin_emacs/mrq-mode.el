@@ -37,7 +37,7 @@
   "스레드 블록의 경계.  `review-md.md' §2 — 앵커는 헤더 **위**에 있다.")
 
 (defconst mrq-mode--state-cycle '(?\s ?x ?~ ?-)
-  "`C-c C-t' 의 순환 순서.  `review-md.md' §3 의 상태 문자.")
+  "체크박스 순환 순서.  `review-md.md' §3 의 상태 문자.")
 
 (defvar mrq-mode-map
   (let ((map (make-sparse-keymap)))
@@ -45,10 +45,14 @@
     (define-key map (kbd "C-c C-t") #'mrq-mode-toggle-state)
     (define-key map (kbd "C-c C-s") #'mrq-mode-sync)
     (define-key map (kbd "C-c C-p") #'mrq-mode-push)
-    (define-key map (kbd "g") #'mrq-mode-pull)
-    (define-key map (kbd "r") #'mrq-mode-reanchor)
+    (define-key map (kbd "C-c C-g") #'mrq-mode-pull)
+    (define-key map (kbd "C-c C-r") #'mrq-mode-reanchor)
     map)
-  "`mrq-mode' 의 키맵.")
+  "`mrq-mode' 의 키맵.
+
+**평문 키를 명령에 묶지 않는다.**  이 버퍼는 `markdown-mode' 파생의
+편집면이고 답글을 여기서 쓴다 — `g'/`r' 을 묶으면 \"retry 로직을 고쳤습니다\"
+의 첫 글자가 `mrq reanchor' 를 돌린다.")
 
 (add-to-list 'compilation-error-regexp-alist-alist
              (list 'mrq mrq-mode-header-re 1 2))
@@ -141,28 +145,62 @@
 (defconst mrq-mode-buffer-name "*mrq*"
   "로그와 점프 가능한 메시지가 모이는 버퍼.")
 
+(defun mrq-mode--assert-current ()
+  "이 버퍼가 `.mrq/current' 가 가리키는 MR 의 `review.md' 인지 확인한다.
+
+`sync' 에는 `--mr' 이 없다 (`cli.md' §1).  `.mrq/3/review.md' 를 열어 두고
+`pull --mr 9' 로 전환한 뒤 저장하면 **MR 9 가 sync 되고** MR 3 의 답글은
+디스크에만 남아 다음 재렌더에 사라진다."
+  (let ((mine (file-name-directory (file-truename (buffer-file-name))))
+        (current (mrq-core-review-dir (buffer-file-name))))
+    (unless (and current (equal (file-truename current) mine))
+      (user-error
+       "이 review.md 는 `.mrq/current' 가 가리키는 MR 이 아닙니다 — `mrq pull --mr %s' 로 전환한 뒤 여세요"
+       (file-name-nondirectory (directory-file-name mine))))
+    current))
+
+(defun mrq-mode--assert-saved (what)
+  "버퍼가 수정됐으면 WHAT 을 거부한다.
+
+`pull'/`reanchor'/`push' 는 `review.md' 를 다시 쓴다 — 미저장 편집 위에
+돌리면 작성 중인 답글이 사라진다."
+  (when (buffer-modified-p)
+    (user-error "먼저 저장하세요 — %s 는 review.md 를 다시 씁니다" what)))
+
 (defun mrq-mode--after-save ()
   "`review.md' 를 저장하면 `mrq sync' 를 돌린다 (`editor.md' §3.3).
 
 소스 파일 저장에는 아무것도 하지 않는다 — 이 훅은 `mrq-mode' 버퍼에만
 걸리므로 그 구분이 자동으로 된다."
-  (mrq-mode-sync))
-
-(defun mrq-mode-sync ()
-  "`mrq sync --json' 을 돌리고 결과에 따라 버퍼를 되읽는다."
-  (interactive)
+  (mrq-mode--assert-current)
   (mrq-mode--report (mrq-cli-run '("sync" "--json") nil (mrq-mode--repo-root))
                     :revert t))
+
+(defun mrq-mode-sync ()
+  "`mrq sync --json' 을 돌리고 결과에 따라 버퍼를 되읽는다.
+
+버퍼가 수정됐으면 **저장만 한다** — `sync' 는 디스크의 md 를 읽으므로
+저장하지 않고 부르면 CLI 가 옛 내용을 반영하고 재렌더가 작성 중인 답글을
+덮어쓴다.  저장이 저장 훅을 통해 다시 여기로 들어온다."
+  (interactive)
+  (mrq-mode--assert-current)
+  (if (buffer-modified-p)
+      (save-buffer)
+    (mrq-mode--report (mrq-cli-run '("sync" "--json") nil (mrq-mode--repo-root))
+                      :revert t)))
 
 (defun mrq-mode-reanchor ()
   "`mrq reanchor --json'.  네트워크를 쓰지 않는다 (`cli.md' §6)."
   (interactive)
+  (mrq-mode--assert-current)
+  (mrq-mode--assert-saved "reanchor")
   (mrq-mode--report (mrq-cli-run '("reanchor" "--json") nil (mrq-mode--repo-root))
                     :revert t))
 
 (defun mrq-mode-pull ()
   "`mrq pull' 후 버퍼를 되읽는다."
   (interactive)
+  (mrq-mode--assert-saved "pull")
   (mrq-mode--report (mrq-cli-run '("pull") nil (mrq-mode--repo-root))
                     :revert t))
 
@@ -172,17 +210,36 @@
 되돌릴 수 없는 작업이므로 확인을 받는다 — CLI 의 `prompt.confirm' 과 같은
 규율이다."
   (interactive)
+  (mrq-mode--assert-current)
+  (mrq-mode--assert-saved "push")
   (let* ((root (mrq-mode--repo-root))
          (status (mrq-cli-run '("status" "--json") nil root)))
     (unless (= (plist-get status :code) 0)
       (mrq-mode--report status)
       (user-error "status 가 실패했습니다"))
-    (when (yes-or-no-p (concat (string-trim (plist-get status :stderr))
+    (when (yes-or-no-p (concat (mrq-mode--status-summary status)
                                "\npush 할까요? "))
       (mrq-mode--report (mrq-cli-run '("push" "--json") nil root) :revert t))))
 
+(defun mrq-mode--status-summary (status)
+  "STATUS(`mrq-cli-run' 의 결과)의 검토면을 한 줄로.
+
+요약은 **stdout** 으로 나온다 (`cli.md' §2) — stderr 를 쓰면 보통 비어 있어
+사용자가 되돌릴 수 없는 전송을 검토면 없이 승인하게 된다."
+  (let* ((payload (plist-get status :json))
+         (push (and payload (gethash "push" payload))))
+    (if (not (hash-table-p push))
+        (or (car (split-string (string-trim (plist-get status :stdout)) "\n"))
+            "status 요약을 읽지 못했습니다")
+      (format "replies %s · resolves %s · skipped %s"
+              (gethash "replies" push)
+              (gethash "resolves" push)
+              (gethash "skipped" push)))))
+
 (cl-defun mrq-mode--report (result &key revert)
-  "RESULT 의 종료 코드에 따라 보고하고, 성공이면 버퍼를 되읽는다.
+  "RESULT 의 종료 코드에 따라 보고한다.
+
+REVERT 가 non-nil 이고 성공이면 버퍼를 되읽는다.
 
 exit 2(파싱 에러)와 exit 3(충돌)에는 **되읽지 않는다** — CLI 가 아무것도
 쓰지 않았고, exit 2 는 고칠 내용이 지금 버퍼에 있다."
@@ -205,7 +262,7 @@ exit 2(파싱 에러)와 exit 3(충돌)에는 **되읽지 않는다** — CLI �
                                      "\n")))))))
 
 (defun mrq-mode--on-conflict (payload)
-  "exit 3 — 충돌 버퍼를 띄운다.
+  "exit 3 — PAYLOAD 로 충돌 버퍼를 띄운다.
 
 버퍼는 되읽지 않는다 (CLI 가 아무것도 쓰지 않았다)."
   (require 'mrq-conflict)
@@ -215,7 +272,7 @@ exit 2(파싱 에러)와 exit 3(충돌)에는 **되읽지 않는다** — CLI �
            mrq-conflict-buffer-name))
 
 (defun mrq-mode--summary (result payload)
-  "에코 영역 한 줄."
+  "RESULT 와 PAYLOAD 로 에코 영역 한 줄을 만든다."
   (if (null payload)
       (or (car (split-string (string-trim (plist-get result :stdout)) "\n")) "완료")
     (let ((applied (gethash "applied" payload))
@@ -239,7 +296,7 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
     (mrq-mode--log (mrq-mode--format-message item))))
 
 (defun mrq-mode--format-message (item)
-  "`{line, message}' 를 `review.md:<line>: <message>' 또는 평문으로."
+  "ITEM(`{line, message}')을 `review.md:<line>: <message>' 또는 평문으로."
   (let ((line (gethash "line" item))
         (text (gethash "message" item)))
     (if (numberp line)

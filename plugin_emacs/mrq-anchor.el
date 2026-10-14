@@ -36,7 +36,7 @@ ANCHOR-LINE 이 공백뿐이면 완전 일치만 본다.  빈 줄 주변은 또 
 비교가 근거를 잃는다 — CLI 의 `mrq.search' 가 같은 결정을 한다.
 
 창은 양끝을 포함하고 버퍼 범위로 clamp 한다.  창이 버퍼와 겹치지 않으면
-(버퍼가 줄어 LOCATION-LINE 이 한참 밖인 경우) 보정하지 않는다."
+\(버퍼가 줄어 LOCATION-LINE 이 한참 밖인 경우) 보정하지 않는다."
   (if (or (null anchor-line) (null location-line))
       location-line
     (let ((lo (max 1 (- location-line mrq-anchor-window)))

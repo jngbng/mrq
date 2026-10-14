@@ -20,6 +20,10 @@
     "buffer": ["    x = 1", "pass", "    x = 1", "pass", "        x = 1"],
     "anchor_line": "    x = 1", "location_line": 2, "expect": 2 },
 
+  { "name": "exact 가 둘이면 더 가까운 쪽을 고르지 않는다",
+    "buffer": ["    x = 1", "pass", "pass", "    x = 1"],
+    "anchor_line": "    x = 1", "location_line": 3, "expect": 3 },
+
   { "name": "창 경계 +200 은 포함",
     "buffer_repeat": { "line": "pass", "count": 500 },
     "buffer_set": [{ "at": 201, "line": "    x = 1" }],

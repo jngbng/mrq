@@ -32,7 +32,7 @@ conformance:
 # 미선언 동적 변수를 전부 여기서 잡는다.
 lint:
 	$(BATCH) --eval '(setq byte-compile-error-on-warn t)' -f batch-byte-compile $(SRC)
-	$(BATCH) --eval '(progn (require (quote checkdoc)) (dolist (f (quote ($(SRC)))) (checkdoc-file (symbol-name f))))'
+	$(BATCH) -l $(CURDIR)/tools/checkdoc-gate.el -f mrq-checkdoc-gate $(SRC)
 	@$(MAKE) clean
 
 clean:
