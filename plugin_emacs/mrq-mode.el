@@ -20,6 +20,12 @@
 (require 'mrq-cli)
 (require 'mrq-core)
 
+;; 충돌 UI 와 flymake 는 필요할 때 끌어온다 — 목록 버퍼를 여는 것만으로
+;; 그 둘을 로드할 이유가 없다.
+(declare-function mrq-conflict-show "mrq-conflict")
+(declare-function mrq-flymake-thread-at-point "mrq-flymake")
+(defvar mrq-conflict-buffer-name)
+
 (defconst mrq-mode-header-re "^## \\[.\\] \\(.+?\\):\\([0-9]+\\)"
   "위치가 있는 스레드 헤더.  `review-md.md' §3.
 
@@ -199,9 +205,14 @@ exit 2(파싱 에러)와 exit 3(충돌)에는 **되읽지 않는다** — CLI �
                                      "\n")))))))
 
 (defun mrq-mode--on-conflict (payload)
-  "exit 3.  Task 9 가 충돌 버퍼로 교체한다."
-  (mrq-mode--log (format "충돌 %d건" (length (gethash "conflicts" payload))))
-  (user-error "충돌이 있습니다"))
+  "exit 3 — 충돌 버퍼를 띄운다.
+
+버퍼는 되읽지 않는다 (CLI 가 아무것도 쓰지 않았다)."
+  (require 'mrq-conflict)
+  (mrq-conflict-show payload (mrq-core-review-dir (buffer-file-name)))
+  (message "충돌 %d건 — %s 에서 고르세요"
+           (length (gethash "conflicts" payload))
+           mrq-conflict-buffer-name))
 
 (defun mrq-mode--summary (result payload)
   "에코 영역 한 줄."
@@ -272,6 +283,34 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
       (if (re-search-forward (format "^<!-- mrq:%s " (regexp-quote (car anchor))) nil t)
           (progn (beginning-of-line) (forward-line (cdr anchor)))
         (goto-char (point-min))))))
+
+
+;;;###autoload
+(defun mrq-reply-at-point ()
+  "point 의 진단이 가리키는 스레드의 `### reply' 로 점프한다.
+
+`review.md' 에서 **점을 옮기기 위한 검색**은 파싱이 아니다 (`editor.md' §1) —
+상태나 답글을 추출하지 않고, 틀려야 커서가 엉뚱한 데 가며 사용자가 즉시 본다.
+md 에서 값을 읽는 경로는 없고, md -> json 변환은 `mrq sync' 하나다.
+
+소스 <-> 목록 왕복이 이것으로 닫힌다."
+  (interactive)
+  (require 'mrq-flymake)
+  (let ((id (mrq-flymake-thread-at-point)))
+    (unless id
+      (user-error "여기에 MR 코멘트가 없습니다"))
+    (let* ((dir (mrq-core-review-dir (buffer-file-name)))
+           (md (and dir (expand-file-name "review.md" dir))))
+      (unless (and md (file-exists-p md))
+        (user-error "review.md 가 없습니다 — `mrq pull --render' 로 복원하세요"))
+      (pop-to-buffer (find-file-noselect md))
+      (goto-char (point-min))
+      (unless (re-search-forward (format "^<!-- mrq:%s " (regexp-quote id)) nil t)
+        (user-error "%s 의 블록이 review.md 에 없습니다" id))
+      (if (re-search-forward "^### reply$" nil t)
+          (progn (forward-line 1)
+                 (when (looking-at "^$") (forward-line 1)))
+        (beginning-of-line)))))
 
 (provide 'mrq-mode)
 ;;; mrq-mode.el ends here

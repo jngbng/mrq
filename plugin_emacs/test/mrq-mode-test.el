@@ -9,6 +9,7 @@
 
 (require 'ert)
 (require 'compile)
+(require 'mrq)
 (require 'mrq-mode)
 (require 'mrq-test-helper)
 
@@ -305,6 +306,61 @@
         (should-error (mrq-mode-sync) :type 'user-error)
         (with-current-buffer "*mrq*"
           (should (string-match-p "schema_version" (buffer-string))))))))
+
+;;; mrq-reply-at-point — 소스 <-> 목록 왕복을 닫는다
+
+(ert-deftest mrq-reply-at-point-jumps-to-the-reply-section ()
+  "`review.md' 에서 앵커를 **검색**하는 것은 파싱이 아니다 (`editor.md' §1).
+
+상태나 답글을 추출하지 않고 점만 옮긴다 — 틀려야 커서가 엉뚱한 데 가고
+사용자가 즉시 본다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+    (write-region mrq-mode-test--md nil
+                  (expand-file-name ".mrq/1234/review.md" root) nil 'quiet)
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (mrq-setup)
+      (flymake-start nil t)
+      (let ((diag (car (flymake-diagnostics))))
+        (should diag)
+        (goto-char (flymake-diagnostic-beg diag)))
+      (mrq-reply-at-point)
+      (should (equal (file-name-nondirectory (buffer-file-name)) "review.md"))
+      ;; a1b2 블록의 `### reply' 아래에 있다
+      (should (equal (save-excursion
+                       (re-search-backward mrq-mode-anchor-re nil t)
+                       (match-string 1))
+                     "a1b2c3d4e5f6"))
+      (should (save-excursion
+                (re-search-backward "^### reply$" nil t))))))
+
+(ert-deftest mrq-reply-at-point-errors-without-a-diagnostic ()
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\n")))
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (should-error (mrq-reply-at-point) :type 'user-error))))
+
+(ert-deftest mrq-reply-at-point-errors-without-a-review-md ()
+  "`review.md' 가 없으면 `mrq pull --render' 를 안내한다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (mrq-setup)
+      (flymake-start nil t)
+      (goto-char (flymake-diagnostic-beg (car (flymake-diagnostics))))
+      (should-error (mrq-reply-at-point) :type 'user-error))))
+
+(ert-deftest mrq-setup-is-a-noop-outside-a-review-repo ()
+  "`prog-mode-hook' 에 걸어도 안전해야 한다."
+  (let ((dir (file-truename (make-temp-file "mrq-bare-" t))))
+    (unwind-protect
+        (let ((file (expand-file-name "a.py" dir)))
+          (write-region "x\n" nil file nil 'quiet)
+          (with-current-buffer (find-file-noselect file)
+            (mrq-setup)
+            (should-not (bound-and-true-p flymake-mode))
+            (kill-buffer)))
+      (delete-directory dir t))))
 
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here
