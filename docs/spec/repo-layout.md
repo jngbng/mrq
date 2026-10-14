@@ -79,7 +79,8 @@ mrq/
 | `search.py` | 문자열 탐색 fallback. git·파일시스템을 모른다 | `WINDOW`, `find` |
 | `reanchor.py` | 재앵커링 오케스트레이션 | `MR_HEAD_REFSPEC`, `Stats`, `ensure_commits`, `reanchor_all` |
 | `conflict.py` | 충돌 판정 (`data-model.md` §5.2). 사람(md)과 AI(CLI)가 같은 스레드를 다르게 고친 경우만 충돌. "렌더 후 json 변경"은 `v` 핑거프린트로 판정한다(`decisions/0008`) | `Applied`, `Conflict`, `md_values`, `classify`, `plan_sync` |
-| `threads.py` | 스레드 참조 해석과 `list` 필터 (`cli.md` §1, §7). 접두사가 여럿과 겹치면 exit 1 — 모호한 `--thread` 가 엉뚱한 스레드에 적용되는 것을 막는 유일한 지점 | `resolve_ref`, `filter_threads` |
+| `prefer.py` | `sync --prefer [ID=]md|json` 의 파싱과 해소 (`cli.md` §5, `decisions/0013`). 좁은 스코프가 순서와 무관하게 이긴다. 리뷰 대조는 `threads.resolve_ref` 에 맡긴다 | `DIRECTIONS`, `Preference`, `Resolution`, `parse`, `resolve` |
+| `threads.py` | 스레드 참조 해석과 `list` 필터 (`cli.md` §1, §7). 접두사가 여럿과 겹치면 exit 1 — 모호한 접두사가 사용자가 지정하지 않은 스레드에 해소 방향을 적용하는 것을 막는 유일한 지점 | `resolve_ref`, `filter_threads` |
 | `report.py` | `status` 집계 — push 블록이 전송 직전 검토면이다 (`cli.md` §8). `push.plan`을 호출해 숫자를 만든다 — `status`와 `push`가 같은 판정 함수를 쓴다는 규칙(`cli.md` §8)이 여기 있다 | `status_payload` |
 | `push.py` | **순수 판정.** `plan(review, *, snapshot=…, resolve=, force=)` → `Plan`. 네트워크·파일을 만지지 않는다 (`cli.md` §8·§9) | `SKIP_REASONS`, `body_hash`, `Decision`, `Plan`, `plan` |
 | `transport.py` | **GitLab 에 쓰는 유일한 지점.** notes·resolve·draft·publish | `post_reply`, `resolve`, `list_drafts`, `create_draft`, `bulk_publish` |

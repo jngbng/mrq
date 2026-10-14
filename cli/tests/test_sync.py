@@ -287,6 +287,22 @@ def test_sync_pick_on_a_non_conflicting_thread_warns(conflicted, capsys):
     assert "충돌이 아닙니다" in capsys.readouterr().err
 
 
+def test_sync_reports_an_unused_pick_even_when_conflicts_remain(two_conflicts, capsys):
+    """exit 3 경로에서도 "충돌이 아닙니다" 경고가 나와야 한다 (`cli.md` §5 MUST).
+
+    오타를 잡으려고 만든 경고가, 오타가 가장 잘 나는 상황(여러 충돌을 한 번에
+    지목하는 호출)에서만 사라지면 안 된다.
+    """
+    assert main(["sync", "--prefer", "f6a1=md", "--prefer", "b2c3=json"]) == 3
+    assert "충돌이 아닙니다" in capsys.readouterr().err
+
+
+def test_sync_conflict_message_states_that_nothing_was_written(conflicted, capsys):
+    """exit 2 와 같은 어조여야 한다 — 조건문이 아니라 평서문으로 알린다."""
+    assert main(["sync"]) == 3
+    assert "아무것도 쓰지 않았습니다" in capsys.readouterr().err
+
+
 def test_sync_repeated_scopeless_prefer_takes_the_last(conflicted):
     # 같은 스코프 안에서는 뒤가 이긴다. json 이 먼저 와도 md 가 적용된다.
     assert main(["sync", "--prefer", "json", "--prefer", "md"]) == 0

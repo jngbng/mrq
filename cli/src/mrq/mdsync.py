@@ -81,7 +81,10 @@ def perform(
     resolution = prefer.resolve(review, prefer.parse(prefer_values))
     applied, conflicts, extra = conflict.plan_sync(review, parsed, resolution=resolution)
     if conflicts:
-        return Outcome(conflicts=conflicts)
+        # 경고를 함께 돌려준다 — 버리면 `--prefer <ID>=` 오타가 **여러 충돌을
+        # 한 번에 지목하는 호출**, 즉 오타가 가장 잘 나는 상황에서만 조용해진다.
+        # 그 경고가 존재하는 이유가 정확히 그것이다 (`cli.md` §5 MUST).
+        return Outcome(conflicts=conflicts, warnings=parsed.warnings + extra)
 
     at = surface.now()
     by_id = {t.id: t for t in review.threads}
@@ -181,8 +184,9 @@ def report_conflicts(iid: int, conflicts: list[conflict.Conflict], *, json_mode:
             print(f"  json [{item.json_state}] {item.json_reply!r}", file=sys.stderr)
         print(
             "`mrq sync --prefer md|json` 으로 전체를, "
-            "`mrq sync --prefer <스레드>=md|json` 으로 스레드마다 해소하세요. "
-            "일부만 지정하면 나머지 충돌이 남아 아무것도 쓰지 않습니다.",
+            "`mrq sync --prefer <스레드>=md|json` 으로 스레드마다 해소하세요 "
+            "(일부만 지정하면 나머지 충돌이 남아 역시 아무것도 쓰지 않습니다). "
+            "아무것도 쓰지 않았습니다.",
             file=sys.stderr,
         )
     return 3
