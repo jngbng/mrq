@@ -8,7 +8,7 @@
 
 ```
 mrq pull     [--mr IID] [--all] [--no-render] [--render]
-mrq sync     [--json] [--prefer md|json] [--thread ID]...
+mrq sync     [--json] [--prefer [ID=]md|json]...
 mrq status   [--json]
 mrq push     [--json] [--dry-run] [--force] [--draft] [--publish]
              [--resolve auto|skip|require]
@@ -293,6 +293,36 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 남는다. 경고는 알리기만 하고 `push`의 동작도 상태도 바꾸지 않는다(MUST NOT) —
 `[ ]`로 두고 초안을 적어 두는 것은 정상 워크플로다. `status`도 같은 이름의 경고를
 낸다(§8).
+
+### 충돌 해소 — `--prefer [ID=]md|json`
+
+반복 가능하다. 스코프 없이 주면 충돌한 전체에, `ID=` 를 붙이면 그 스레드에만
+적용된다. `ID` 는 유일한 접두사를 받는다(§1).
+
+> **좁은 스코프가 순서와 무관하게 이긴다. 같은 스코프 안에서는 뒤가 이긴다.**
+
+```sh
+mrq sync --prefer md                          # 전부 md
+mrq sync --prefer md --prefer f6e5=json       # 전부 md, f6e5 만 json
+mrq sync --prefer f6e5=json --prefer md       # ← 위와 같은 결과
+mrq sync --prefer md --prefer json            # 같은 스코프 반복 → json
+mrq sync --prefer a1b2=md --prefer a1b2=json  # 같은 스코프 반복 → json
+```
+
+**일부만 지정하면 나머지 충돌이 남아 아무것도 쓰지 않는다**(§5.3 MUST). 부분
+해소는 없다 — 에디터의 충돌 UI 가 **모든 충돌에 방향이 정해진 뒤에만** `sync` 를
+불러야 하는 이유다(`editor.md` §3.4).
+
+`--prefer` 는 **충돌로 판정된 스레드에만** 적용된다. `ID=` 로 지목한 스레드가
+충돌이 아니면 경고하고 동작은 바꾸지 않는다(MUST) — 오타가 조용히 삼켜지지
+않게 한다.
+
+스코프 없는 값이 실제 스레드 id 의 접두사와 겹치면 **exit 1** 이다. discussion
+id 는 16진수라 도달할 수 없지만, 그 가정이 깨졌을 때 조용한 오동작 대신 에러가
+나도록 가드를 둔다.
+
+문법을 이렇게 고른 근거와 버린 대안은
+[0013](../decisions/0013-scoped-conflict-resolution.md).
 
 ### `sync --json`
 

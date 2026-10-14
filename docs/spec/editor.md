@@ -128,7 +128,7 @@ flymake 는 영역이 필요하므로 진단을 만들지 않고, 메시지 면(
 
 **exit 3 (충돌)**: `*mrq conflicts*` 버퍼에 스레드별로 md 쪽 값과 json 쪽 값을 나란히
 보여주고 `m`(md 채택) / `j`(json 유지)로 선택한다. 선택은
-`mrq sync --prefer md|json --thread <id>`를 호출해 반영한다.
+`mrq sync --prefer <id>=md|json`을 호출해 반영한다 (`cli.md` §5).
 
 이 UI가 없으면 충돌을 보여줄 수는 있어도 **해소할 방법이 없다** — 사용자가 md를
 수동으로 되돌리는 수밖에 없고, json 값을 모르면 그것도 불가능하다.
