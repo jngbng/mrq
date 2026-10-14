@@ -12,6 +12,32 @@
 
 ## 준비
 
+### `mrq` 를 PATH 에 올린다
+
+CLI 는 `cli/.venv` 안에만 있다. 그 console script 는 **절대 경로 shebang** 이라
+venv 를 활성화하지 않아도 어디서든 돌고, **editable 설치**라 코드를 고치면 바로
+반영된다. `~/.local/bin` 은 이미 PATH 에 있으므로 심링크 하나면 된다:
+
+```sh
+ln -sf ~/workspace/mrq/cli/.venv/bin/mrq ~/.local/bin/mrq
+which mrq && mrq --version
+```
+
+되돌리려면 `rm ~/.local/bin/mrq`. (venv 가 없으면 먼저
+`cd cli && uv sync && uv pip install -e .`)
+
+**Emacs 도 찾는지 확인한다** — `M-: (executable-find "mrq")`. GUI 런처로 띄운
+Emacs 는 로그인 셸의 PATH 를 못 받는 경우가 있다. `nil` 이 나오면 둘 중 하나:
+
+```elisp
+;; 절대 경로를 박는다 (repo-layout.md §5 의 defcustom 이 이것을 위해 있다)
+(setq mrq-executable "~/workspace/mrq/cli/.venv/bin/mrq")
+;; 또는 exec-path 에 더한다
+(add-to-list 'exec-path (expand-file-name "~/.local/bin"))
+```
+
+### 플러그인을 물린다
+
 ```elisp
 ;; ~/.emacs.d/modules_jbseo/init-mrq.el
 (use-package mrq
