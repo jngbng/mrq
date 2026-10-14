@@ -37,6 +37,10 @@
   (let ((map (make-sparse-keymap)))
     (define-key map (kbd "RET") #'mrq-mode-visit)
     (define-key map (kbd "C-c C-t") #'mrq-mode-toggle-state)
+    (define-key map (kbd "C-c C-s") #'mrq-mode-sync)
+    (define-key map (kbd "C-c C-p") #'mrq-mode-push)
+    (define-key map (kbd "g") #'mrq-mode-pull)
+    (define-key map (kbd "r") #'mrq-mode-reanchor)
     map)
   "`mrq-mode' 의 키맵.")
 
@@ -50,7 +54,8 @@
 `markdown-mode' 에서 파생하는 이유는 답글에 표·코드펜스·수평선이 평범하게
 들어오기 때문이다 (`review-md.md' §1)."
   (setq-local compilation-error-regexp-alist '(mrq))
-  (setq-local next-error-function #'mrq-mode-next-error))
+  (setq-local next-error-function #'mrq-mode-next-error)
+  (add-hook 'after-save-hook #'mrq-mode--after-save nil t))
 
 ;;;###autoload
 (add-to-list 'auto-mode-alist '("/\\.mrq/[^/]+/review\\.md\\'" . mrq-mode))
@@ -123,6 +128,150 @@
            (rest (cdr (memq current mrq-mode--state-cycle)))
            (next (or (car rest) (car mrq-mode--state-cycle))))
       (replace-match (char-to-string next) t t nil 1))))
+
+
+;;; CLI 호출과 보고
+
+(defconst mrq-mode-buffer-name "*mrq*"
+  "로그와 점프 가능한 메시지가 모이는 버퍼.")
+
+(defun mrq-mode--after-save ()
+  "`review.md' 를 저장하면 `mrq sync' 를 돌린다 (`editor.md' §3.3).
+
+소스 파일 저장에는 아무것도 하지 않는다 — 이 훅은 `mrq-mode' 버퍼에만
+걸리므로 그 구분이 자동으로 된다."
+  (mrq-mode-sync))
+
+(defun mrq-mode-sync ()
+  "`mrq sync --json' 을 돌리고 결과에 따라 버퍼를 되읽는다."
+  (interactive)
+  (mrq-mode--report (mrq-cli-run '("sync" "--json") nil (mrq-mode--repo-root))
+                    :revert t))
+
+(defun mrq-mode-reanchor ()
+  "`mrq reanchor --json'.  네트워크를 쓰지 않는다 (`cli.md' §6)."
+  (interactive)
+  (mrq-mode--report (mrq-cli-run '("reanchor" "--json") nil (mrq-mode--repo-root))
+                    :revert t))
+
+(defun mrq-mode-pull ()
+  "`mrq pull' 후 버퍼를 되읽는다."
+  (interactive)
+  (mrq-mode--report (mrq-cli-run '("pull") nil (mrq-mode--repo-root))
+                    :revert t))
+
+(defun mrq-mode-push ()
+  "`mrq status' 요약을 보여주고 확인을 받은 뒤 `mrq push'.
+
+되돌릴 수 없는 작업이므로 확인을 받는다 — CLI 의 `prompt.confirm' 과 같은
+규율이다."
+  (interactive)
+  (let* ((root (mrq-mode--repo-root))
+         (status (mrq-cli-run '("status" "--json") nil root)))
+    (unless (= (plist-get status :code) 0)
+      (mrq-mode--report status)
+      (user-error "status 가 실패했습니다"))
+    (when (yes-or-no-p (concat (string-trim (plist-get status :stderr))
+                               "\npush 할까요? "))
+      (mrq-mode--report (mrq-cli-run '("push" "--json") nil root) :revert t))))
+
+(cl-defun mrq-mode--report (result &key revert)
+  "RESULT 의 종료 코드에 따라 보고하고, 성공이면 버퍼를 되읽는다.
+
+exit 2(파싱 에러)와 exit 3(충돌)에는 **되읽지 않는다** — CLI 가 아무것도
+쓰지 않았고, exit 2 는 고칠 내용이 지금 버퍼에 있다."
+  (let ((code (plist-get result :code))
+        (payload (plist-get result :json)))
+    (cond
+     ((= code 0)
+      (mrq-mode--log-messages payload "warnings")
+      (when revert (mrq-mode--revert-keeping-thread))
+      (message "%s" (mrq-mode--summary result payload)))
+     ((= code 2)
+      (mrq-mode--log-messages payload "errors")
+      (unless payload (mrq-mode--log (string-trim (plist-get result :stderr))))
+      (message "파싱 에러 — %s 에서 C-x `" mrq-mode-buffer-name))
+     ((= code 3) (mrq-mode--on-conflict payload))
+     (t
+      (mrq-mode--log (string-trim (plist-get result :stderr)))
+      (user-error "mrq: %s"
+                  (car (split-string (string-trim (plist-get result :stderr))
+                                     "\n")))))))
+
+(defun mrq-mode--on-conflict (payload)
+  "exit 3.  Task 9 가 충돌 버퍼로 교체한다."
+  (mrq-mode--log (format "충돌 %d건" (length (gethash "conflicts" payload))))
+  (user-error "충돌이 있습니다"))
+
+(defun mrq-mode--summary (result payload)
+  "에코 영역 한 줄."
+  (if (null payload)
+      (or (car (split-string (string-trim (plist-get result :stdout)) "\n")) "완료")
+    (let ((applied (gethash "applied" payload))
+          (anchors (gethash "anchors" payload))
+          (warnings (gethash "warnings" payload)))
+      (concat (when applied (format "applied %d" (length applied)))
+              (when anchors
+                (format " · exact %s fuzzy %s stale %s"
+                        (gethash "exact" anchors) (gethash "fuzzy" anchors)
+                        (gethash "stale" anchors)))
+              (when (and warnings (> (length warnings) 0))
+                (format " · 경고 %d건 (%s)" (length warnings) mrq-mode-buffer-name))))))
+
+(defun mrq-mode--log-messages (payload key)
+  "PAYLOAD 의 KEY (\"warnings\" 또는 \"errors\") 를 `*mrq*' 에 넣는다.
+
+`line' 이 `null' 인 경고에 **위치를 만들어내지 않는다** (`cli.md' §5
+MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으로 둔다 —
+가짜 위치가 위치 신뢰를 잃는 가장 빠른 길이다 (`data-model.md' §4.9)."
+  (dolist (item (and payload (gethash key payload)))
+    (mrq-mode--log (mrq-mode--format-message item))))
+
+(defun mrq-mode--format-message (item)
+  "`{line, message}' 를 `review.md:<line>: <message>' 또는 평문으로."
+  (let ((line (gethash "line" item))
+        (text (gethash "message" item)))
+    (if (numberp line)
+        (format "review.md:%d: %s" line text)
+      text)))
+
+(defun mrq-mode--log (text)
+  "TEXT 를 `*mrq*' 에 넣는다.  그 버퍼는 `compilation-mode' 다.
+
+`default-directory' 를 리뷰 디렉터리로 두면 `review.md:142:' 가 그대로
+점프 가능해진다."
+  (let ((dir (mrq-core-review-dir (buffer-file-name))))
+    (with-current-buffer (get-buffer-create mrq-mode-buffer-name)
+      (let ((inhibit-read-only t))
+        (unless (derived-mode-p 'compilation-mode)
+          (compilation-mode)
+          (setq-local compilation-error-regexp-alist '(mrq)))
+        (when dir (setq-local default-directory dir))
+        (goto-char (point-max))
+        (insert text "\n")))))
+
+(defun mrq-mode--thread-at-point ()
+  "point 위의 가장 가까운 앵커의 (thread-id . 블록 안 오프셋).  없으면 nil."
+  (save-excursion
+    (let ((here (line-number-at-pos)))
+      (beginning-of-line)
+      (when (or (looking-at mrq-mode-anchor-re)
+                (re-search-backward mrq-mode-anchor-re nil t))
+        (cons (match-string-no-properties 1)
+              (- here (line-number-at-pos)))))))
+
+(defun mrq-mode--revert-keeping-thread ()
+  "버퍼를 되읽고 point 를 **스레드 id 기준**으로 복원한다.
+
+줄 번호로 복원하면 재렌더로 앞 블록의 줄 수가 바뀔 때마다 커서가 흘러간다 —
+답글을 쓸 때마다 일어난다."
+  (let ((anchor (mrq-mode--thread-at-point)))
+    (revert-buffer t t t)
+    (when anchor
+      (goto-char (point-min))
+      (if (re-search-forward (format "^<!-- mrq:%s " (regexp-quote (car anchor))) nil t)
+          (progn (beginning-of-line) (forward-line (cdr anchor)))
+        (goto-char (point-min))))))
 
 (provide 'mrq-mode)
 ;;; mrq-mode.el ends here

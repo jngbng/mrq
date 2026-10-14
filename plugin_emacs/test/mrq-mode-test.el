@@ -158,5 +158,153 @@
     (delay-mode-hooks (mrq-mode))
     (should (derived-mode-p 'markdown-mode))))
 
+;;; 저장 훅과 종료 코드 분기
+
+(defconst mrq-mode-test--ok-json
+  (concat "{\"iid\":1234,\"applied\":[],\"warnings\":[],"
+          "\"anchors\":{\"exact\":1,\"fuzzy\":0,\"stale\":0}}")
+  "`sync --json' 의 exit 0 페이로드.")
+
+(ert-deftest mrq-mode-save-runs-sync ()
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "확인했습니다.\n")
+        (save-buffer)
+        (should (equal (mrq-test-cli-calls root) '("sync --json")))))))
+
+(ert-deftest mrq-mode-does-nothing-on-saving-a-source-file ()
+  "`editor.md' §3.3 — 소스 저장에는 아무것도 하지 않는다.
+
+매번 재앵커링을 돌리면 json 과 md 를 다시 쓰게 되는데 그 비용을 낼 이유가 없다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root)))
+      (with-current-buffer (find-file-noselect
+                            (expand-file-name "src/api/client.py" root))
+        (goto-char (point-max))
+        (insert "c\n")
+        (save-buffer)
+        (should (null (mrq-test-cli-calls root)))))))
+
+(ert-deftest mrq-mode-save-restores-point-by-thread-id-not-line ()
+  "`sync' 가 `review.md' 를 재렌더한다 (`cli.md' §5 5단계).
+
+줄 번호로 복원하면 앞 블록의 길이가 바뀔 때마다 커서가 흘러간다 — 답글을
+쓸 때마다 일어나는 일이다.  가짜 `mrq' 가 진짜처럼 md 를 다시 쓴다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+           (grown (replace-regexp-in-string
+                   "## \\[ \\] (general) — @kim\n"
+                   "## [ ] (general) — @kim\n\n> 서버가 덧붙인 줄\n> 또 한 줄\n"
+                   mrq-mode-test--md t t))
+           (mrq-executable (mrq-test-fake-cli root
+                                              :stdout mrq-mode-test--ok-json
+                                              :writes (cons md grown))))
+      (should-not (equal grown mrq-mode-test--md))   ; 픽스처가 실제로 늘었는가
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-min))
+        (search-forward "<!-- mrq:a1b2c3d4e5f6")
+        (search-forward "### reply")
+        (forward-line 1)
+        (insert "답글 한 줄\n")
+        ;; `before' 는 **삽입 뒤**에 잡는다.  삽입 전에 잡으면 줄 번호로
+        ;; 복원하는 구현도 "줄이 늘었다" 를 만족해 테스트가 가짜로 통과한다.
+        (let ((before (line-number-at-pos)))
+          (save-buffer)
+          (should (string-match-p "서버가 덧붙인 줄" (buffer-string)))
+          ;; 앞 블록이 세 줄 늘었으므로 줄 번호는 커지고, 스레드는 그대로다
+          (should (> (line-number-at-pos) before))
+          (should (equal (save-excursion
+                           (re-search-backward mrq-mode-anchor-re nil t)
+                           (match-string 1))
+                         "a1b2c3d4e5f6")))))))
+
+(ert-deftest mrq-mode-parse-error-does-not-revert-the-buffer ()
+  "exit 2 — CLI 가 아무것도 안 썼고 고칠 내용이 지금 버퍼에 있다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli
+            root :code 2
+            :stdout (concat "{\"errors\":[{\"line\":8,"
+                            "\"message\":\"체크박스 문자를 해석할 수 없음\"}]}"))))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "내가 쓴 것\n")
+        (save-buffer)
+        ;; 저장은 됐고(디스크에도 있고) 되읽지 않았으므로 버퍼에 그대로 있다
+        (should (string-match-p "내가 쓴 것" (buffer-string)))
+        (with-current-buffer "*mrq*"
+          (should (string-match-p "review.md:8: 체크박스" (buffer-string))))))))
+
+(ert-deftest mrq-mode-logs-a-warning-without-a-line-without-inventing-one ()
+  "`cli.md' §5 MUST NOT — `review.md:0' 도 1 행도 쓰지 않는다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli
+            root
+            :stdout (concat "{\"iid\":1234,\"applied\":[],\"warnings\":"
+                            "[{\"line\":null,\"message\":"
+                            "\"a1b2c3d4: 답글이 있는데 상태가 todo 입니다\"}],"
+                            "\"anchors\":{\"exact\":1,\"fuzzy\":0,\"stale\":0}}"))))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "답글\n")                      ; 수정해야 save-buffer 가 돈다
+        (save-buffer)
+        (with-current-buffer "*mrq*"
+          (let ((text (buffer-string)))
+            (should (string-match-p "답글이 있는데" text))
+            (should-not (string-match-p "review.md:0" text))
+            (should-not (string-match-p "review.md:1:" text))))))))
+
+(ert-deftest mrq-mode-mrq-buffer-is-a-compilation-buffer ()
+  "`review.md:142:' 가 그대로 `C-x `' 로 점프 가능해야 한다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli root :code 2
+                              :stdout "{\"errors\":[{\"line\":3,\"message\":\"x\"}]}")))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "답글\n")
+        (save-buffer)
+        (with-current-buffer "*mrq*"
+          (should (derived-mode-p 'compilation-mode))
+          ;; 상대 경로 `review.md' 가 풀리도록 리뷰 디렉터리가 기준이어야 한다
+          (should (file-exists-p (expand-file-name "review.md" default-directory))))))))
+
+(ert-deftest mrq-mode-reanchor-and-pull-use-the-cli ()
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (mrq-mode-reanchor)
+        (mrq-mode-pull)
+        (should (equal (mrq-test-cli-calls root)
+                       '("reanchor --json" "pull")))))))
+
+(ert-deftest mrq-mode-push-asks-before-sending ()
+  "되돌릴 수 없는 작업이므로 확인을 받는다 (`editor.md' §3.2)."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) nil)))
+          (mrq-mode-push))
+        ;; 거절했으므로 status 만 돌고 push 는 안 나갔다
+        (should (equal (mrq-test-cli-calls root) '("status --json")))
+        (cl-letf (((symbol-function 'yes-or-no-p) (lambda (&rest _) t)))
+          (mrq-mode-push))
+        (should (equal (mrq-test-cli-calls root)
+                       '("status --json" "status --json" "push --json")))))))
+
+(ert-deftest mrq-mode-reports-a-generic-failure-without-reverting ()
+  "exit 1/5/6/7 — stderr 를 보여주고 멈춘다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli root :code 7
+                              :stderr "review.json 의 schema_version 이 99 입니다\n")))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (should-error (mrq-mode-sync) :type 'user-error)
+        (with-current-buffer "*mrq*"
+          (should (string-match-p "schema_version" (buffer-string))))))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

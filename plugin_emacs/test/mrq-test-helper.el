@@ -106,17 +106,30 @@ CLI 가 `os.replace' 를 쓰므로(`store.py:179') 테스트도 같은 모양이
 
 모킹이 아니라 진짜 프로세스다 (`testing.md' §2).  호출될 때마다 argv 를
 `calls.txt' 에 한 줄씩, stdin 을 `stdin.txt' 에 덮어쓰고, OPTS 가 지정한
-stdout/stderr/종료 코드를 낸다."
-  (let ((path (expand-file-name "fake-mrq" root))
-        (code (or (plist-get opts :code) 0))
-        (stdout (or (plist-get opts :stdout) ""))
-        (stderr (or (plist-get opts :stderr) "")))
+stdout/stderr/종료 코드를 낸다.
+
+`:writes' 가 (경로 . 내용) 이면 그 파일을 덮어쓴다.  진짜 `mrq sync' 가
+`review.md' 를 재렌더하는 것을 그대로 흉내 내기 위한 것이다 — Emacs 쪽
+`after-save-hook' 으로 흉내 내면 훅 순서와 modtime 처리가 끼어들어 실제와
+다른 것을 시험하게 된다."
+  (let* ((path (expand-file-name "fake-mrq" root))
+         (code (or (plist-get opts :code) 0))
+         (stdout (or (plist-get opts :stdout) ""))
+         (stderr (or (plist-get opts :stderr) ""))
+         (writes (plist-get opts :writes))
+         (payload (and writes (expand-file-name "fake-write-payload" root))))
+    (when writes
+      (write-region (cdr writes) nil payload nil 'quiet))
     (write-region
      (concat "#!/bin/sh\n"
              "printf '%s\\n' \"$*\" >> " (shell-quote-argument
                                           (expand-file-name "calls.txt" root)) "\n"
              "cat > " (shell-quote-argument
                        (expand-file-name "stdin.txt" root)) "\n"
+             (if writes
+                 (concat "cp " (shell-quote-argument payload) " "
+                         (shell-quote-argument (car writes)) "\n")
+               "")
              "printf '%s' " (shell-quote-argument stdout) "\n"
              "printf '%s' " (shell-quote-argument stderr) " >&2\n"
              "exit " (number-to-string code) "\n")
