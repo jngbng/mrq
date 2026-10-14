@@ -39,22 +39,29 @@
 (defconst mrq-mode--state-cycle '(?\s ?x ?~ ?-)
   "체크박스 순환 순서.  `review-md.md' §3 의 상태 문자.")
 
+(defvar mrq-mode-command-map (make-sparse-keymap)
+  "`review.md' 에서 `C-c m' 뒤에 오는 키들.")
+
 (defvar mrq-mode-map (make-sparse-keymap)
   "`mrq-mode' 의 키맵.
 
-**평문 키를 명령에 묶지 않는다.**  이 버퍼는 `markdown-mode' 파생의
-편집면이고 답글을 여기서 쓴다 — `g'/`r' 을 묶으면 \"retry 로직을 고쳤습니다\"
-의 첫 글자가 `mrq reanchor' 를 돌린다.")
+**평문 키도 `C-c' + 컨트롤 문자도 쓰지 않는다.**  이 버퍼는 `markdown-mode'
+파생의 편집면이고, 그 공간은 부모가 이미 쓰고 있다 — 스타일 접두사(코드펜스·
+표·굵게)와 제목 접두사가 특히 그렇다.
+답글에 표와 코드펜스가 평범하게 들어온다는 것이 `review-md.md' §1 의 전제다.
+
+그래서 소스 버퍼 쪽과 같은 `C-c m' 접두사를 쓴다 — `markdown-mode' 에서
+비어 있고, 외울 접두사가 하나가 된다.")
 
 ;; 내용을 최상위에서 채우는 이유는 `mrq.el' 의 같은 자리와 같다 — `defvar' 가
 ;; 재평가에서 초기화 폼을 건너뛰므로, 키맵을 초기값으로 만들면 재로드가
 ;; 반영되지 않는다.
-(define-key mrq-mode-map (kbd "RET") #'mrq-mode-visit-or-newline)
-(define-key mrq-mode-map (kbd "C-c C-t") #'mrq-mode-toggle-state)
-(define-key mrq-mode-map (kbd "C-c C-s") #'mrq-mode-sync)
-(define-key mrq-mode-map (kbd "C-c C-p") #'mrq-mode-push)
-(define-key mrq-mode-map (kbd "C-c C-g") #'mrq-mode-pull)
-(define-key mrq-mode-map (kbd "C-c C-r") #'mrq-mode-reanchor)
+(define-key mrq-mode-command-map (kbd "s") #'mrq-mode-sync)
+(define-key mrq-mode-command-map (kbd "p") #'mrq-mode-push)
+(define-key mrq-mode-command-map (kbd "f") #'mrq-mode-pull)
+(define-key mrq-mode-command-map (kbd "t") #'mrq-mode-toggle-state)
+(define-key mrq-mode-command-map (kbd "r") #'mrq-mode-visit)
+(define-key mrq-mode-map (kbd "C-c m") mrq-mode-command-map)
 
 (add-to-list 'compilation-error-regexp-alist-alist
              (list 'mrq mrq-mode-header-re 1 2))
@@ -90,19 +97,6 @@
     (when (looking-at mrq-mode-header-re)
       (cons (match-string-no-properties 1)
             (string-to-number (match-string-no-properties 2))))))
-
-(defun mrq-mode-visit-or-newline ()
-  "헤더 줄이면 소스로 가고, 아니면 평소대로 줄을 바꾼다.
-
-`RET' 를 무조건 점프에 묶으면 **답글에서 줄을 바꿀 수 없다** — 이 버퍼는
-`markdown-mode' 파생의 편집면이고 `RET' 는 거기서 가장 흔한 키다.  헤더 줄은
-애초에 타이핑하는 자리가 아니고 거기서 줄을 쪼개면 `sync' 가 깨지므로,
-그 한 줄에서만 점프한다."
-  (interactive)
-  (if (save-excursion (beginning-of-line) (looking-at mrq-mode-header-re))
-      (mrq-mode-visit)
-    (let ((fallback (or (lookup-key markdown-mode-map (kbd "RET")) #'newline)))
-      (call-interactively fallback))))
 
 (defun mrq-mode-visit ()
   "point 의 스레드가 가리키는 소스 위치로 이동한다."
@@ -204,13 +198,25 @@
     (mrq-mode--report (mrq-cli-run '("sync" "--json") nil (mrq-mode--repo-root))
                       :revert t)))
 
-(defun mrq-mode-reanchor ()
-  "`mrq reanchor --json'.  네트워크를 쓰지 않는다 (`cli.md' §6)."
+
+;;;###autoload
+(defun mrq-reanchor ()
+  "`mrq reanchor --json'.  네트워크를 쓰지 않는다 (`cli.md' §6).
+
+**소스 버퍼에서 부르는 명령이다** (`C-c m R').  소스를 고쳐 저장하면 json 의
+`location' 이 낡는데, 버퍼 내 보정(`reanchoring.md' §6)은 창 200 줄 안의
+유일한 후보만 잡으므로 큰 이동·파일 이동·rename 은 CLI 의 git 매핑이 필요하다.
+
+`review.md' 버퍼에는 따로 키를 주지 않는다 — 거기서 저장하면 `sync' 가 어차피
+재앵커링을 포함한다 (`cli.md' §5 4단계).
+
+버퍼를 되읽지 않는다.  `review.json' 이 바뀌면 `file-notify' 가 열린 버퍼의
+진단을 갱신하고(`editor.md' §1-5), `review.md' 를 보고 있다면 그쪽도 같은
+경로로 처리된다."
   (interactive)
-  (mrq-mode--assert-current)
-  (mrq-mode--assert-saved "reanchor")
-  (mrq-mode--report (mrq-cli-run '("reanchor" "--json") nil (mrq-mode--repo-root))
-                    :revert t))
+  (let ((root (or (mrq-core-root (buffer-file-name))
+                  (user-error "리뷰가 있는 리포가 아닙니다"))))
+    (mrq-mode--report (mrq-cli-run '("reanchor" "--json") nil root))))
 
 (defun mrq-mode-pull ()
   "`mrq pull' 후 버퍼를 되읽는다."
@@ -375,7 +381,10 @@ md 에서 값을 읽는 경로는 없고, md -> json 변환은 `mrq sync' 하나
            (md (and dir (expand-file-name "review.md" dir))))
       (unless (and md (file-exists-p md))
         (user-error "review.md 가 없습니다 — `mrq pull --render' 로 복원하세요"))
-      (pop-to-buffer (find-file-noselect md))
+      ;; **같은 창**에서 연다.  다른 창에 띄우면 창 배치가 틀어져 혼란스럽고,
+      ;; 돌아오는 길(`C-c m r' = `mrq-mode-visit')도 같은 창을 쓰므로 왕복이
+      ;; 한 창 안에서 닫힌다.
+      (pop-to-buffer-same-window (find-file-noselect md))
       (goto-char (point-min))
       (unless (re-search-forward (format "^<!-- mrq:%s " (regexp-quote id)) nil t)
         (user-error "%s 의 블록이 review.md 에 없습니다" id))

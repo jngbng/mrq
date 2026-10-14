@@ -275,14 +275,12 @@
           ;; 상대 경로 `review.md' 가 풀리도록 리뷰 디렉터리가 기준이어야 한다
           (should (file-exists-p (expand-file-name "review.md" default-directory))))))))
 
-(ert-deftest mrq-mode-reanchor-and-pull-use-the-cli ()
+(ert-deftest mrq-mode-pull-uses-the-cli ()
   (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
     (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
       (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
-        (mrq-mode-reanchor)
         (mrq-mode-pull)
-        (should (equal (mrq-test-cli-calls root)
-                       '("reanchor --json" "pull")))))))
+        (should (equal (mrq-test-cli-calls root) '("pull")))))))
 
 (ert-deftest mrq-mode-push-asks-before-sending ()
   "되돌릴 수 없는 작업이므로 확인을 받는다 (`editor.md' §3.2)."
@@ -393,14 +391,13 @@
         ;; 저장이 저장 훅을 통해 sync 를 한 번만 돌렸다
         (should (equal (mrq-test-cli-calls root) '("sync --json")))))))
 
-(ert-deftest mrq-mode-reanchor-refuses-while-the-buffer-is-modified ()
-  "`reanchor' 와 `pull' 은 md 를 다시 쓴다 — 미저장 편집 위에 돌리면 지워진다."
+(ert-deftest mrq-mode-pull-refuses-while-the-buffer-is-modified ()
+  "`pull' 과 `push' 는 md 를 다시 쓴다 — 미저장 편집 위에 돌리면 지워진다."
   (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
     (let ((mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
       (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
         (goto-char (point-max))
         (insert "작성 중인 답글\n")
-        (should-error (mrq-mode-reanchor) :type 'user-error)
         (should-error (mrq-mode-pull) :type 'user-error)
         (should-error (mrq-mode-push) :type 'user-error)
         (should (string-match-p "작성 중인 답글" (buffer-string)))
@@ -524,31 +521,90 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
     (should (eq mrq-minor-mode-map minor-map))
     (should (eq (lookup-key mrq-minor-mode-map (kbd "C-c m")) mrq-command-map))))
 
-(ert-deftest mrq-mode-ret-inserts-a-newline-in-the-reply-area ()
-  "`review.md' 는 답글을 쓰는 편집면이다 — `RET' 로 줄을 바꿀 수 있어야 한다.
+(ert-deftest mrq-mode-leaves-ret-to-markdown ()
+  "`review.md' 는 편집면이다 — `RET' 는 markdown 의 것이어야 한다.
 
-`g'/`r' 과 같은 종류의 실수이고 더 흔하다.  헤더 줄에서만 소스로 점프한다."
+소스 점프는 `C-c m r' 로 옮겼다.  문맥에 따라 갈라지는 `RET' 는 설명하기도
+어렵고 틀리기도 쉬웠다."
   (with-temp-buffer
     (insert mrq-mode-test--md)
     (delay-mode-hooks (mrq-mode))
-    (goto-char (point-min))
-    (search-forward "### reply")
-    (forward-line 1)
-    (let ((before (line-number-at-pos)))
-      (call-interactively (key-binding (kbd "RET")))
-      (should (> (line-number-at-pos) before)))))
+    (should (eq (key-binding (kbd "RET"))
+                (lookup-key markdown-mode-map (kbd "RET"))))))
 
-(ert-deftest mrq-mode-ret-visits-the-source-on-a-header-line ()
-  "헤더 줄에서는 그대로 소스로 간다 (`editor.md' §3.2)."
-  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\n")))
-    (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
-      (goto-char (point-min))
-      (search-forward "## [ ] src/api/client.py:2")
-      (beginning-of-line)
-      (call-interactively (key-binding (kbd "RET")))
-      (should (equal (file-truename (buffer-file-name))
-                     (file-truename (expand-file-name "src/api/client.py" root))))
-      (should (= (line-number-at-pos) 2)))))
+(ert-deftest mrq-mode-keeps-markdown-prefixes ()
+  "`C-c C-s'(스타일)와 `C-c C-t'(제목)는 markdown 의 가장 쓸모 있는 접두사다.
+
+답글에 코드펜스·표·굵게를 넣는 경로라 (`review-md.md' §1) 가리면 안 된다."
+  (with-temp-buffer
+    (insert mrq-mode-test--md)
+    (delay-mode-hooks (mrq-mode))
+    (dolist (key '("C-c C-s" "C-c C-t"))
+      (should (keymapp (key-binding (kbd key)))))
+    (should (eq (key-binding (kbd "C-c C-s C")) #'markdown-insert-gfm-code-block))
+    (should (eq (key-binding (kbd "C-c C-s t")) #'markdown-insert-table))
+    (should (eq (key-binding (kbd "C-c C-p")) #'markdown-outline-previous))))
+
+(ert-deftest mrq-mode-commands-live-under-the-c-c-m-prefix ()
+  "소스 버퍼와 같은 접두사를 쓴다 — 외울 것이 하나다."
+  (with-temp-buffer
+    (insert mrq-mode-test--md)
+    (delay-mode-hooks (mrq-mode))
+    (should (eq (key-binding (kbd "C-c m s")) #'mrq-mode-sync))
+    (should (eq (key-binding (kbd "C-c m p")) #'mrq-mode-push))
+    (should (eq (key-binding (kbd "C-c m f")) #'mrq-mode-pull))
+    (should (eq (key-binding (kbd "C-c m t")) #'mrq-mode-toggle-state))
+    (should (eq (key-binding (kbd "C-c m r")) #'mrq-mode-visit))))
+
+(ert-deftest mrq-mode-has-no-reanchor-command ()
+  "reanchor 가 필요한 곳은 소스 버퍼다 (`C-c m R').
+
+`review.md' 를 편집하는 동안 소스는 바뀌지 않고, 저장하면 `sync' 가 어차피
+재앵커링을 포함한다 (`cli.md' §5 4단계)."
+  (should-not (fboundp 'mrq-mode-reanchor)))
+
+(ert-deftest mrq-reanchor-runs-from-a-source-buffer ()
+  "소스를 고치고 저장한 뒤 위치를 다시 잡는 경로."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli
+            root :stdout "{\"anchors\":{\"exact\":12,\"fuzzy\":2,\"stale\":1}}")))
+      (with-current-buffer (find-file-noselect
+                            (expand-file-name "src/api/client.py" root))
+        (mrq-setup)
+        (should (eq (key-binding (kbd "C-c m R")) #'mrq-reanchor))
+        (call-interactively #'mrq-reanchor)
+        (should (equal (mrq-test-cli-calls root) '("reanchor --json")))
+        ;; 소스 버퍼를 되읽지 않는다 — review.json 변경은 watch 가 처리한다
+        (should (equal (file-name-nondirectory (buffer-file-name)) "client.py"))))))
+
+(ert-deftest mrq-reply-at-point-opens-review-md-in-the-same-window ()
+  "다른 윈도우에 열면 배치가 틀어져 혼란스럽다.
+
+소스 -> review.md -> (C-c m r) -> 소스 가 같은 창에서 오간다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+    (write-region mrq-mode-test--md nil
+                  (expand-file-name ".mrq/1234/review.md" root) nil 'quiet)
+    (let* ((source (find-file-noselect (expand-file-name "src/api/client.py" root)))
+           (other (get-buffer-create "*다른 창*")))
+      (delete-other-windows)
+      (set-window-buffer (selected-window) source)
+      (let ((here (selected-window)))
+        (set-window-buffer (split-window) other)
+        (select-window here)
+        (with-current-buffer source
+          (mrq-setup)
+          (flymake-start nil t)
+          (goto-char (flymake-diagnostic-beg (car (flymake-diagnostics))))
+          (mrq-reply-at-point))
+        ;; 내가 있던 창이 review.md 를 보여준다
+        (should (equal (file-name-nondirectory
+                        (buffer-file-name (window-buffer here)))
+                       "review.md"))
+        ;; 옆 창은 그대로다
+        (should (eq (window-buffer (next-window here)) other)))
+      (delete-other-windows)
+      (kill-buffer other))))
 
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

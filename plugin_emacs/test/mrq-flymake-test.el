@@ -169,12 +169,15 @@ span 을 그렇게 잃는다."
                        (+ line 2))))
           (set-buffer-modified-p nil))))))
 
-(ert-deftest mrq-flymake-does-not-correct-a-saved-buffer ()
-  "저장된 버퍼의 위치는 CLI 가 git 으로 계산한 값이고 그쪽이 언제나 더 낫다."
+(ert-deftest mrq-flymake-corrects-a-saved-buffer-too ()
+  "저장했다고 보정을 끄면 **저장한 순간 진단이 틀어진다.**
+
+`buffer-modified-p' 게이트의 근거는 \"CLI 가 git 으로 계산한 값이 더 낫다\" 였는데,
+그건 디스크가 CLI 가 본 상태일 때만 참이다.  저장하는 순간 그 전제가 깨지고
+되돌릴 장치가 없다 — 보정이 가장 필요해지는 순간에 정확히 꺼진다."
   (let ((anchor (mrq-flymake-test--anchor-line "f6a1b2c3d4e5"))
         (line (mrq-flymake-test--location-line "f6a1b2c3d4e5")))
-    ;; 앵커를 **다른 줄**에 두고 저장된 상태로 연다.  보정하면 그 줄로 가고,
-    ;; 보정하지 않으면 location.line 에 남는다.
+    ;; 앵커가 location.line 보다 3 줄 아래에 있는, **저장된** 파일
     (mrq-test-with-repo (root :files (list (cons "src/api/retry.py"
                                                  (mrq-flymake-test--filler
                                                   (+ line 3) anchor))))
@@ -182,8 +185,32 @@ span 을 그렇게 잃는다."
              (diags (mrq-flymake-test--diagnostics file)))
         (should (= (length diags) 1))
         (with-current-buffer (find-file-noselect file)
+          (should-not (buffer-modified-p))
           (should (= (line-number-at-pos (flymake-diagnostic-beg (car diags)))
-                     line)))))))
+                     (+ line 3))))))))
+
+(ert-deftest mrq-flymake-survives-a-save-without-drifting ()
+  "편집 -> 저장 의 앞뒤로 진단이 같은 줄에 남아야 한다.
+
+저장 전에는 맞고 저장 후에 틀리는 것이 사용자가 가장 먼저 보는 고장이다."
+  (let ((anchor (mrq-flymake-test--anchor-line "f6a1b2c3d4e5"))
+        (line (mrq-flymake-test--location-line "f6a1b2c3d4e5")))
+    (mrq-test-with-repo (root :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--filler line anchor))))
+      (with-current-buffer (find-file-noselect
+                            (expand-file-name "src/api/retry.py" root))
+        (mrq-flymake-setup)
+        (goto-char (point-min))
+        (insert "import os\nimport sys\n")        ; 두 줄 밀린다
+        (flymake-start nil t)
+        (should (= (line-number-at-pos (flymake-diagnostic-beg
+                                        (car (flymake-diagnostics))))
+                   (+ line 2)))
+        (save-buffer)
+        (flymake-start nil t)
+        (should (= (line-number-at-pos (flymake-diagnostic-beg
+                                        (car (flymake-diagnostics))))
+                   (+ line 2)))))))
 
 ;;; 픽스처 조작 — 테스트 파일이므로 json-parse 금지 규칙의 대상이 아니다
 ;;; (`mrq-boundary-test.el' 은 plugin_emacs/*.el 소스만 본다).

@@ -35,6 +35,7 @@
 ;; `mrq-setup' 이 필요할 때 끌어오므로 컴파일 시점에는 없다.
 (declare-function mrq-flymake-setup "mrq-flymake")
 (declare-function mrq-reply-at-point "mrq-mode")
+(declare-function mrq-reanchor "mrq-mode")
 
 (defvar mrq-command-map (make-sparse-keymap)
   "소스 버퍼에서 `C-c m' 뒤에 오는 키들.")
@@ -60,6 +61,7 @@
 (define-key mrq-command-map (kbd "r") #'mrq-reply-at-point)
 (define-key mrq-command-map (kbd "n") #'flymake-goto-next-error)
 (define-key mrq-command-map (kbd "p") #'flymake-goto-prev-error)
+(define-key mrq-command-map (kbd "R") #'mrq-reanchor)
 (define-key mrq-minor-mode-map (kbd "C-c m") mrq-command-map)
 
 ;;;###autoload

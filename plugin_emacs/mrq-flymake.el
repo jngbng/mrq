@@ -83,13 +83,19 @@ resolve 됐고 내 미전송 작업이 없다.
 (defun mrq-flymake--line (buffer thread location)
   "THREAD 의 LOCATION 이 가리키는 줄을 BUFFER 안에서 보정한다.
 
-보정은 **저장하지 않은 버퍼에서만** 한다 (`reanchoring.md' §6).  저장된
-버퍼의 위치는 CLI 가 git 으로 계산한 값이고 그쪽이 언제나 더 낫다 — git diff
-hunk 맵과 context 점수를 쓸 수 있는 쪽은 CLI 뿐이다."
+**저장 여부를 보지 않는다.**  예전에는 저장하지 않은 버퍼에서만 보정했는데
+\(`reanchoring.md' §6 의 원래 문구), 그 근거인 \"CLI 가 git 으로 계산한 값이 더
+낫다\" 는 **디스크가 CLI 가 본 상태일 때만** 참이다.  저장하는 순간 그 전제가
+깨지고 되돌릴 장치가 없어서, 보정이 가장 필요해지는 순간에 정확히 꺼졌다 —
+편집 중에는 맞던 진단이 저장하는 순간 틀어졌다.
+
+디스크가 CLI 가 본 그대로면 앵커는 이미 `location.line' 에 있고 보정은 같은
+값을 돌려주거나(유일) 포기한다(모호) — 그 경우 무해하다.  큰 이동·파일 이동·
+rename 은 여전히 CLI 의 git 매핑이 필요하고 `mrq-reanchor' 가 그것을 부른다."
   (let ((line (gethash "line" location))
         (anchor (gethash "anchor" thread)))
     (with-current-buffer buffer
-      (if (or (not (buffer-modified-p)) (not (hash-table-p anchor)))
+      (if (not (hash-table-p anchor))
           line
         (mrq-anchor-correct (mrq-flymake--buffer-lines)
                             (gethash "line" anchor)
