@@ -11,7 +11,7 @@ git 히스토리, 그리고 스펙에 남는다.
 | — | — | **계획 3 전 과제** — 잔여 항목 R6·R7·R3·R4 | **완료** (2026-10-13) |
 | 3 | 9, 10, 12 | `push`까지 완결된 CLI | **완료** (2026-10-14, 26 커밋) |
 | — | — | **계획 4 전 과제** — `sync --prefer` 스코프 문법 | **완료** (2026-10-14) |
-| 4 | 11 | `plugin_emacs` | |
+| 4 | 11 | `plugin_emacs` | **완료** (2026-10-14) |
 | 5 | 13 | `plugin_vscode` | |
 
 새 계획을 시작할 때는 `superpowers:writing-plans`로 `docs/plans/YYYY-MM-DD-<주제>.md`를
@@ -34,7 +34,7 @@ git 히스토리, 그리고 스펙에 남는다.
 | 8 | `mrq reply`, `mrq state` | FR-012 | 2 | 완료 |
 | 9 | `mrq push` (일반 notes 경로) + 멱등성 테스트 | FR-008 ~ FR-011 | 3 | 완료 |
 | 10 | `mrq doctor`, `mrq clean`, `mrq open` | FR-016, FR-017, FR-019 | 3 | 완료 |
-| 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | 4 | |
+| 11 | `mrq.el` — flymake 백엔드 먼저, 목록 버퍼 나중 | FR-014 | 4 | 완료 |
 | 12 | `--draft` 모드 | FR-013 | 3 | 완료 |
 | 13 | VSCode 확장 | FR-015 | 5 | |
 
@@ -156,27 +156,47 @@ FR-017(`clean`), FR-019(`open`), FR-013(`--draft`).
 
 ---
 
-## 계획 4 — `plugin_emacs` (11단계)
+## 계획 4 — 완료
 
-**결과물:** flymake 백엔드와 목록 버퍼. 소스 ↔ 코멘트 왕복이 닫힌다.
+11단계. flymake 백엔드와 `review.md` 목록 버퍼. **소스 ↔ 코멘트 왕복이 닫힌다** —
+`M-g n` 으로 코멘트를 돌고, `C-c m r` 로 답글을 쓰고, 저장하면 `sync` 가 돌고,
+`file-notify` 가 열린 버퍼의 진단을 갱신한다. 78개 ERT.
 
-FR-014. 스펙은 `spec/editor.md` §1~3.
+구현된 FR: FR-014.
 
-**이 계획이 만드는 것 둘.** `plugin_emacs/` 디렉터리 자체와,
-`testdata/conformance/anchor.json` 적합성 테이블(`spec/repo-layout.md` §4.1).
-**이 구현이 그 테이블의 기준이 되고 계획 5가 그것을 통과해야 한다.** 결정 0003이
-"저장 안 된 버퍼의 앵커 한 줄 검색"을 세 언어에 복제했고, 그 테이블만이 셋이 같게
-동작하는 것을 강제한다(`spec/repo-layout.md` §4.1). 테이블 없이 계획 5를 시작하면
-비교할 기준이 없어 "둘 다 그럴듯하게 동작하지만 서로 다르다"를 발견할 방법이 없다.
+일곱 모듈, 의존은 한쪽으로만 흐른다. `mrq-anchor.el`(의존 0, 적합성 테이블의 대상),
+`mrq-core.el`(`review.json` 을 읽는 유일한 창구), `mrq-cli.el`(프로세스를 띄우는
+유일한 자리), 그리고 UI 넷. `mrq-boundary-test.el` 이 그 경계를 코드 모양으로
+고정한다 — 변형 테스트로 실제로 무는 것을 확인했다.
 
-**잊기 쉬운 것:** `spec/editor.md` §1의 일곱 줄 규범이 에디터가 할 수 있는 일의
-경계다. 특히 `review.md`를 파싱하지 않고, `review.json`을 직접 쓰지 않고,
-`schema_version`을 확인하고, git·네트워크를 호출하지 않는다. 위치 보정은
-`spec/reanchoring.md` §6의 범위(저장 안 된 버퍼의 `location.line ± 200`, 완전 일치
-→ strip 일치, **후보가 유일할 때만**)만 수행한다.
+**`testdata/conformance/anchor.json` 16건이 이 계획의 가장 오래 남는 산출물이다.**
+계획 5 가 그것을 통과해야 하고, 스펙 문장만으로는 안 잡히는 다섯 가지를 못박는다 —
+창 크기, 창 경계의 포함 여부, 공백뿐인 앵커의 strip 생략, 유일성 가드, trailing
+공백 흡수. 변형 테스트로 다섯 다 잡는 것을 확인했고, **못 잡는 하나**("exact 가
+둘이면 strip 으로 안 내려간다")는 관측 가능한 효과가 없다는 것도 함께 적었다
+(`repo-layout.md` §4.1).
 
-`mrq.el`은 `markdown-mode`에 하드 의존한다. Eask는 쓰지 않는다 — MELPA 발행이
-future work인 동안은 `make deps`의 `package-install` 한 줄로 충분하다.
+설계에서 스펙에 반영된 것 넷:
+
+- 점을 옮기기 위한 검색은 파싱이 아니다 (`editor.md` §1)
+- flymake 는 `review.md`·`mrq list` 와 **같은 집합**을 보여준다 — 서버에서
+  resolve 됐고 미전송 작업이 없으면 감춘다 (§3.1, 결정 0001)
+- 파일이 아니라 디렉터리에 watch 를 건다 (§3.1) — Emacs 에서는 동등하지만
+  VSCode 는 확인이 필요하다
+- 충돌 버퍼는 모든 선택을 모아 **한 번의 `sync`** 로 보낸다 (§3.4, 결정 0013)
+
+**실측은 `2026-10-14-plugin-emacs-dogfood.md`.** 배치 ERT 가 구조적으로 답할 수
+없는 것만 담겨 있다 — 다른 flymake 백엔드와의 공존, 키 바인딩 충돌, 그리고 위치
+없는 경고의 가시성(잠정 결정)을 재평가하는 관찰 항목.
+
+### 계획 5 를 위한 메모
+
+- `FileSystemWatcher` 가 `os.replace` 교체를 따라가는지 **직접 확인할 것.**
+  Emacs 는 파일 watch 도 부모 디렉터리를 보므로 함정이 없었지만 VSCode 는
+  같은 보장을 가정할 수 없다 (`editor.md` §3.1)
+- 적합성 테이블의 `buffer_set` 은 **치환**이다 (삽입이 아니다). 전부 1-indexed
+- `mrq-anchor.el` 과 1:1 로 대응하는 `anchor.ts` 를 만들고 의존을 0 으로 둘 것 —
+  그래야 테이블 테스트가 순수 단위 테스트가 된다
 
 ---
 

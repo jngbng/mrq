@@ -12,7 +12,17 @@ Python CLI, `mrq.el`, VSCode 확장이 같은 데이터를 다룬다. 다음 다
 1. **`review.json`만 읽는다.** `review.md`를 파싱하지 않는다(MUST NOT)
 2. **상태 변경은 `mrq reply` / `mrq state` / `mrq sync`로만 한다.**
    `review.json`을 직접 쓰지 않는다(MUST NOT)
-3. **위치 보정은 `docs/spec/reanchoring.md` §6의 범위만** 수행한다
+3. **위치 보정은 `docs/spec/reanchoring.md` §6의 범위만** 수행한다.
+   보정을 **부르는 쪽**의 규범 넷:
+   1. `buffer-modified-p`가 nil이면 **보정을 건너뛴다** — §6의 범위가 "저장하지
+      않은 버퍼"다. 저장된 버퍼의 위치는 CLI가 git으로 계산한 값이고 그쪽이
+      언제나 더 낫다 (hunk 맵과 context 점수를 쓸 수 있는 쪽은 CLI뿐이다)
+   2. 보정이 `d`줄 옮기면 **`location.line_end`에도 같은 `d`를 더한다** —
+      멀티라인 코멘트의 span을 잃지 않는다
+   3. 진단을 만들 때 **버퍼 범위로 clamp 한다.** 버퍼가 줄면 `location.line`이
+      버퍼 밖을 가리키는데 CLI는 디스크 파일만 보므로 그 경우를 모른다
+   4. `location`이 `null`이거나 `confidence == "stale"`이면 진단 자체가 없으므로
+      보정을 부르지 않는다
 4. **`git`과 네트워크를 호출하지 않는다**(MUST NOT)
 5. **`review.json`을 파일 감시로 추적해** 진단을 갱신한다(MUST)
 6. **`schema_version`을 확인한다.** 모르는 버전이면 명확한 메시지와 함께 동작을
@@ -20,6 +30,18 @@ Python CLI, `mrq.el`, VSCode 확장이 같은 데이터를 다룬다. 다음 다
    조용히 깨지지 않아야 한다
 7. **`testdata/conformance/anchor.json`을 통과해야 한다**(MUST). 3번의 보정 로직이
    세 구현에서 같게 동작하는지를 강제하는 유일한 장치다 (`repo-layout.md` §4.1)
+
+**1번의 경계.** `review.md`에서 **점(point)을 옮기기 위한 검색**은 파싱이 아니다.
+금지되는 것은 md에서 `local.state` / `local.reply`를 **추출하는 것**이다 — 그 값을
+읽는 경로는 `review.json` 하나이고, md → json 변환은 `mrq sync` 하나다. 점 이동이
+틀리면 커서가 엉뚱한 데 가고 사용자가 즉시 보지만, 값 추출이 틀리면 답글이 조용히
+사라진다.
+
+그 경계가 실제로 묶는 것 둘:
+
+- 체크박스 토글(§3.2 `C-c C-t`)은 **버퍼 텍스트만 고치고** 상태를 자기가 해석하지
+  않는다. `[ ]→[x]→[~]→[-]` 순환은 문자 치환이고 의미는 `sync`가 준다
+- `g`/`r` 뒤의 버퍼 되읽기는 md를 다시 읽는 게 아니라 `revert-buffer`다
 
 5번은 사람과 AI가 동시에 작업하기 때문에 필수다. AI가 `mrq reply`로 json을 고치는
 동안 사용자는 소스 버퍼를 보고 있다. mtime을 접근 시점에만 확인하면 그 버퍼의 진단은
@@ -65,12 +87,30 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
   켠다. 120초 예산에서 보고 싶은 것은 "남은 것"이다
 - `confidence == "stale"`은 표시하지 않는다(MUST)
 - `location == null`인 스레드는 진단을 만들지 않는다(MUST)
+- **서버에서 resolve 됐고 미전송 작업이 없는 스레드는 표시하지 않는다**
+  (`review-md.md` §5와 같은 규칙). 이 규칙이 없으면 동료가 코멘트를 resolve 한 뒤
+  `review.md`·`mrq list`에서는 사라진 것이 flymake에만 남아, 사람과 AI가 다른
+  집합을 본다(`decisions/0001-human-and-ai-are-peers.md`)
+- `mrq-show-handled`는 위의 상태 필터와 이 가시성 필터를 **함께 끈다** —
+  `mrq list --all`과 같은 집합이 된다. `location`/`stale` 규칙은 MUST라 끄지 않는다
 - `confidence == "fuzzy"`는 메시지에 `[fuzzy]`를 붙인다(SHOULD)
 - 메시지는 한 줄: `@jdoe: 타임아웃 설정이 빠졌습니다… [fuzzy]`
 - 진단마다 thread id를 text property로 달아 `mrq-reply-at-point`가 쓸 수 있게 한다(MUST)
 - 같은 줄에 스레드가 여럿이면 진단도 여럿이다. 합치지 않는다
-- `review.json`에 `file-notify-add-watch`를 걸고 변경 시 열린 버퍼 전체의 flymake를
-  다시 돌린다(MUST)
+- `review.json`의 변경을 감시해 열린 버퍼 전체의 flymake를 다시 돌린다(MUST).
+  **감시는 파일이 아니라 그 디렉터리에 건다**(SHOULD) — CLI가 temp 파일 +
+  `os.replace`로 쓰므로 inode가 바뀌고, 원시 inotify에서는 파일에 건 watch가 첫
+  교체 뒤 끊긴 inode에 남아 조용히 죽는다. 덤으로 첫 `pull`이 json을 **만드는**
+  순간도 잡는다.
+
+  Emacs에서는 둘이 동등하다 — `file-notify-add-watch`는 FILE을 받아도 부모
+  디렉터리를 감시하고 이름으로 거른다(실측). 그래도 디렉터리에 명시적으로 거는
+  이유는 동작이 그 구현 세부에 기대지 않게 하려는 것이고, VSCode의
+  `FileSystemWatcher`는 같은 보장을 준다고 가정할 수 없기 때문이다 — **계획 5가
+  거기서 따로 확인해야 한다.**
+
+  **테스트는 두 번 이상 연속으로 고쳐야 한다**(MUST). 한 번만 보는 테스트는 끊긴
+  watch를 통과시킨다
 
 `flymake-goto-next-error` / `flymake-goto-prev-error`가 그대로 "다음/이전 MR
 코멘트로 이동"이 된다. 별도 명령을 만들 필요가 없다.
@@ -86,6 +126,12 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 
 정규식은 `^## \[.\] \(.+?\):\([0-9]+\)`이다. `next-error-function`만 채우면
 `M-g n` / `M-g p`가 목록 버퍼에서 바로 동작한다.
+
+정규식은 **상수 하나**로 두고 `next-error`와 `RET`이 함께 쓴다(SHOULD) — 정의가
+둘로 갈라지면 `M-g n`과 `RET`이 다른 데로 간다.
+
+경로가 **리포 상대**인 것이 함정이다. `review.md`는 `.mrq/<iid>/`에 있으므로
+`default-directory` 기준으로 풀면 틀린다. 리포 루트 기준으로 직접 해석한다(MUST).
 
 | 키 | 동작 |
 |---|---|
@@ -107,6 +153,10 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 | `review.md` | `mrq sync` (md 반영 + 재앵커링 + md 재렌더) |
 | 소스 파일 | **아무것도 하지 않는다** |
 
+저장 훅은 `sync` 뒤에 버퍼를 되읽어야 하고(`sync`가 md를 다시 쓴다, `cli.md` §5
+5단계), **point는 줄 번호가 아니라 스레드 id로 복원한다**(SHOULD) — 재렌더로 앞
+블록의 줄 수가 바뀌면 줄 번호 복원은 커서를 흘려보낸다. 답글을 쓸 때마다 일어난다.
+
 소스 저장마다 `reanchor`를 돌리면 매번 json과 md를 다시 쓰게 되는데 그 비용을 낼
 이유가 없다. 세션 중의 드리프트는 버퍼 내 보정이 흡수하고, git 기반 정밀 보정은
 `sync`가 한다 — `review.md`를 계속 만지는 워크플로이므로 `sync`는 자연히 자주 돌아간다.
@@ -127,13 +177,15 @@ flymake 는 영역이 필요하므로 진단을 만들지 않고, 메시지 면(
 계획 4·5 의 초안 구현을 실제로 써 본 뒤 재평가한다 (`mrq-design.md` §6).
 
 **exit 3 (충돌)**: `*mrq conflicts*` 버퍼에 스레드별로 md 쪽 값과 json 쪽 값을 나란히
-보여주고 `m`(md 채택) / `j`(json 유지)로 선택한다.
+보여주고 `m`(md 채택) / `j`(json 유지)로 선택한다. `M`/`J`가 전체를 한 방향으로
+채우고 개별 키가 그것을 덮는다 — CLI의 스코프 우선 규칙과 같은 모양이다.
 
 **선택은 표시만 하고, 모든 충돌에 방향이 정해진 뒤 한 번의
-`mrq sync --prefer <id>=md|json ...` 으로 보낸다**(MUST). 키를 누를 때마다 `sync` 를
-부르면 안 된다(MUST NOT) — `data-model.md` §5.3 이 "충돌이 하나라도 남으면 아무것도
-쓰지 않고 exit 3" 을 MUST 로 두므로 **첫 키부터 실패한다.** 고르지 않은 스레드가
-남아 있으면 적용을 거부하고 그리로 이동한다. 문법과 근거는
+`mrq sync --prefer <id>=md|json ...` 으로 보낸다**(MUST). 키를 누를 때마다 `sync`를
+부르면 안 된다(MUST NOT) — `data-model.md` §5.3이 "충돌이 하나라도 남으면 아무것도
+쓰지 않고 exit 3"을 MUST로 두므로 **첫 키부터 실패한다.** 고르지 않은 스레드가
+남아 있으면 적용을 거부하고 그리로 point를 옮긴다. 해소가 실패하면 버퍼를 닫지
+않는다 — 닫으면 사용자가 선택을 처음부터 다시 해야 한다. 문법과 근거는
 [0013](../decisions/0013-scoped-conflict-resolution.md).
 
 이 UI가 없으면 충돌을 보여줄 수는 있어도 **해소할 방법이 없다** — 사용자가 md를
@@ -141,12 +193,32 @@ flymake 는 영역이 필요하므로 진단을 만들지 않고, 메시지 면(
 
 ### 3.5 테스트
 
-ERT로 검증한다. 규범 계약이 에디터의 역할을 작게 묶어두었으므로 범위가 좁다.
+ERT로 검증한다. `make test-emacs`가 `plugin_emacs/test/*-test.el` 전부를
+`emacs -Q -batch`로 돌린다. `markdown-mode`는 `plugin_emacs/.elpa/`에만
+설치한다(MUST) — 사용자의 `~/.emacs.d`를 건드리지 않는다.
 
-- `testdata/conformance/anchor.json` 테이블 (§1-7)
-- `compilation-error-regexp-alist` 정규식이 헤더를 잡고 `(general)`은 잡지 않는지
-- 체크박스 토글 순환
-- 모르는 `schema_version`을 거부하는지
+| 파일 | 덮는 것 |
+|---|---|
+| `mrq-anchor-test.el` | `testdata/conformance/anchor.json` 16건 |
+| `mrq-core-test.el` | 탐색(심링크/일반 파일), 캐시, watch 두 번 연속, `current` 교체, `.mrq` 생기기 전 버퍼, `schema_version` 거부 |
+| `mrq-schema-test.el` | `testdata/review/*.json`을 **실제 리더로** 읽기 (`repo-layout.md` §4.2) |
+| `mrq-flymake-test.el` | §3.1의 필터, 버퍼 내 보정, clamp, 멀티라인 span, 같은 줄 중복 |
+| `mrq-cli-test.el` | stdout/stderr 분리, 종료 코드, stdin, 실행 파일 부재 |
+| `mrq-conflict-test.el` | 표시·전체채움·미선택 거부·인자 조립·실패 시 유지 |
+| `mrq-mode-test.el` | 헤더 정규식, 체크박스 순환, `RET`, `next-error`, 저장 훅의 point 복원, `mrq-reply-at-point` |
+| `mrq-boundary-test.el` | §1의 경계를 코드 모양으로 — json 파싱·쓰기·git·프로세스가 어느 파일에 있는지 |
+
+`make lint`은 `byte-compile-error-on-warn t`로 바이트컴파일하고 `checkdoc`를
+돌린다. elisp에서 가장 싼 방어다 — 오타, 잘못된 인자 수, 쓰이지 않는 변수,
+지연 `require`의 미선언 참조를 전부 여기서 잡는다.
+
+**batch에서 비동기를 기다릴 때 두 가지를 주의한다**(실측):
+
+- inotify 이벤트는 `read-event`로만 배달된다. `sit-for`·`sleep-for`·
+  `accept-process-output` 셋은 `emacs -Q -batch`에서 하나도 흘려보내지 않는다
+- `flymake-running-backends`를 폴링하면 안 된다. 동기 백엔드는 flymake가
+  "running"으로 등록하기 전에 보고해 버려 그 리스트가 비지 않고, 같은 버퍼의
+  다른 백엔드(`python-flymake` 등)는 체커가 없는 환경에서 영영 끝나지 않는다
 
 CLI 경로는 `mrq-executable`(defcustom, 기본 `"mrq"`)로 찾는다.
 
