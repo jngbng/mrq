@@ -1,10 +1,10 @@
 """스레드 참조 해석. `docs/spec/cli.md` §1.
 
-`<thread>` 인자(`sync --thread`, 나중의 `reply`/`state`)는 discussion id의
-**유일한 접두사**를 허용해야 한다(MUST). 접두사가 여러 스레드에 걸리면 exit 1과
-함께 후보를 보여준다. 이 판정을 한 곳에 모아 두는 이유는, 모호한 접두사가
-사용자가 지정하지 않은 스레드에 `--prefer`를 적용해 그 스레드의 CLI 값을
-조용히 지우는 사고를 막기 위해서다.
+`<thread>` 인자(`reply`/`state`/`open --thread`)와 `sync --prefer <ID>=...` 의
+스코프는 discussion id의 **유일한 접두사**를 허용해야 한다(MUST). 접두사가 여러
+스레드에 걸리면 exit 1과 함께 후보를 보여준다. 이 판정을 한 곳에 모아 두는
+이유는, 모호한 접두사가 사용자가 지정하지 않은 스레드에 해소 방향을 적용해 그
+스레드의 CLI 값을 조용히 지우는 사고를 막기 위해서다.
 """
 
 from __future__ import annotations

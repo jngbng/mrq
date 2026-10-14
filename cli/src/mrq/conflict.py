@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from mrq import mdparse, model, render
+from mrq import mdparse, model, prefer, render
 
 
 @dataclass
@@ -76,14 +76,18 @@ def plan_sync(
     review,
     parsed: mdparse.Parsed,
     *,
-    prefer: str | None = None,
-    only: tuple[str, ...] = (),
+    resolution: prefer.Resolution | None = None,
 ) -> tuple[list[Applied], list[Conflict], list[mdparse.Message]]:
-    """무엇을 반영하고 무엇이 충돌인지 계산한다. 아무것도 변경하지 않는다."""
+    """무엇을 반영하고 무엇이 충돌인지 계산한다. 아무것도 변경하지 않는다.
+
+    `resolution` 의 방향은 **충돌로 판정된 스레드에만** 적용된다. `ID=` 로
+    지목했는데 충돌이 아니면 경고한다 — 오타가 조용히 삼켜지는 것을 막는다.
+    """
     by_id = {t.id: t for t in review.threads}
     applied: list[Applied] = []
     conflicts: list[Conflict] = []
     warnings: list[mdparse.Message] = []
+    used_picks: set[str] = set()
 
     for block in parsed.blocks:
         thread = by_id.get(block.thread_id)
@@ -95,8 +99,12 @@ def plan_sync(
             )
             continue
         decision = classify(thread, block)
-        if decision == "conflict" and prefer and _targeted(block.thread_id, only):
-            decision = "apply-md" if prefer == "md" else "keep-json"
+        if decision == "conflict" and resolution is not None:
+            direction = resolution.direction_for(thread.id)
+            if direction is not None:
+                if thread.id in resolution.picks:
+                    used_picks.add(thread.id)
+                decision = "apply-md" if direction == "md" else "keep-json"
         state, reply = md_values(thread, block)
         if decision == "apply-md":
             applied.append(
@@ -117,6 +125,15 @@ def plan_sync(
                     json_reply=render.normalize_reply(thread.local.reply),
                 )
             )
+    if resolution is not None:
+        for thread_id in resolution.picks:
+            if thread_id not in used_picks:
+                warnings.append(
+                    mdparse.Message(
+                        None,
+                        f"{thread_id}: 충돌이 아닙니다 — `--prefer` 지정을 무시합니다",
+                    )
+                )
     warnings += _todo_with_reply_warnings(review, parsed, applied)
     return applied, conflicts, warnings
 
@@ -153,14 +170,3 @@ def _todo_with_reply_warnings(
                 )
             )
     return out
-
-
-def _targeted(thread_id: str, only: tuple[str, ...]) -> bool:
-    """`--thread` 가 없으면 충돌 전체, 주면 지정한 것만 (§5.3).
-
-    `only` 는 `commands.sync` 가 `threads.resolve_ref` 로 미리 완전한 discussion
-    id 로 해석해 넘긴다 — 접두사 매칭은 여기서 하지 않는다. 모호한 접두사가
-    엉뚱한 스레드에 `--prefer` 를 적용하는 사고를 막는 유일한 지점을
-    `threads.py` 하나로 모으기 위해서다.
-    """
-    return not only or thread_id in only

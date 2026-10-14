@@ -13,13 +13,7 @@ def run(args) -> int:
     root, iid, path = context.root, context.iid, context.path
 
     with store.review_lock(root, iid):
-        outcome = mdsync.perform(
-            root,
-            iid,
-            path,
-            prefer=args.prefer,
-            only_refs=tuple(args.thread or ()),
-        )
+        outcome = mdsync.perform(root, iid, path, prefer_values=args.prefer)
     if outcome.errors:
         return mdsync.report_errors(outcome.errors, json_mode=args.json)
     if outcome.conflicts:
