@@ -1,0 +1,69 @@
+[
+  { "name": "유일한 후보를 채택한다",
+    "buffer": ["def f():", "    x = 1", "    y = 2"],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 2 },
+
+  { "name": "후보가 둘이면 보정하지 않는다",
+    "buffer": ["    x = 1", "", "    x = 1"],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
+
+  { "name": "완전 일치가 없으면 strip 일치를 쓴다",
+    "buffer": ["def f():", "        x = 1"],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 2 },
+
+  { "name": "창(+-200) 밖은 보지 않는다",
+    "buffer_repeat": { "line": "pass", "count": 500 },
+    "buffer_set": [{ "at": 400, "line": "    x = 1" }],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
+
+  { "name": "exact 가 둘이고 strip 전용 후보가 있어도 보정하지 않는다",
+    "buffer": ["    x = 1", "pass", "    x = 1", "pass", "        x = 1"],
+    "anchor_line": "    x = 1", "location_line": 2, "expect": 2 },
+
+  { "name": "창 경계 +200 은 포함",
+    "buffer_repeat": { "line": "pass", "count": 500 },
+    "buffer_set": [{ "at": 201, "line": "    x = 1" }],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 201 },
+
+  { "name": "창 경계 +201 은 제외",
+    "buffer_repeat": { "line": "pass", "count": 500 },
+    "buffer_set": [{ "at": 202, "line": "    x = 1" }],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
+
+  { "name": "창 경계 -200 은 포함",
+    "buffer_repeat": { "line": "pass", "count": 500 },
+    "buffer_set": [{ "at": 201, "line": "    x = 1" }],
+    "anchor_line": "    x = 1", "location_line": 401, "expect": 201 },
+
+  { "name": "strip 후보가 둘이면 보정하지 않는다",
+    "buffer": ["pass", "        x = 1", "pass", "  x = 1"],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
+
+  { "name": "공백뿐인 앵커는 exact 가 유일하면 채택한다",
+    "buffer": ["def f():", "    ", "pass"],
+    "anchor_line": "    ", "location_line": 1, "expect": 2 },
+
+  { "name": "공백뿐인 앵커는 strip 단계로 내려가지 않는다",
+    "buffer": ["def f():", "        ", "pass"],
+    "anchor_line": "  ", "location_line": 1, "expect": 1 },
+
+  { "name": "location_line 이 버퍼보다 커도 창을 clamp 해 탐색한다",
+    "buffer": ["pass", "    x = 1", "pass"],
+    "anchor_line": "    x = 1", "location_line": 5, "expect": 2 },
+
+  { "name": "창이 버퍼와 겹치지 않으면 보정하지 않는다",
+    "buffer": ["pass", "    x = 1", "pass"],
+    "anchor_line": "    x = 1", "location_line": 500, "expect": 500 },
+
+  { "name": "앵커가 아예 없으면 보정하지 않는다",
+    "buffer": ["def f():", "    y = 2"],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
+
+  { "name": "빈 버퍼",
+    "buffer": [],
+    "anchor_line": "    x = 1", "location_line": 3, "expect": 3 },
+
+  { "name": "trailing 공백은 strip 이 흡수한다",
+    "buffer": ["def f():", "x = 1   "],
+    "anchor_line": "x = 1", "location_line": 1, "expect": 2 }
+]
