@@ -24,9 +24,13 @@
 `noninteractive' 일 때만 쓴다."
   (let ((deadline (+ (float-time) (or seconds 3))))
     (while (and (not (funcall predicate)) (< (float-time) deadline))
+      ;; 프로세스 기반 백엔드(예: `python-flymake')와 inotify 를 **둘 다**
+      ;; 흘려보내야 한다 — `accept-process-output' 은 프로세스만,
+      ;; `read-event' 는 파일 알림만 배달한다.
+      (accept-process-output nil 0.01)
       (if noninteractive
-          (read-event nil nil 0.05)
-        (sit-for 0.05)))
+          (read-event nil nil 0.04)
+        (sit-for 0.04)))
     (funcall predicate)))
 
 (defconst mrq-test-data-dir
