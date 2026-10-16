@@ -278,8 +278,12 @@ def render(review: model.Review, *, include_resolved: bool = False) -> str:
     대조하므로(cli.md §5) 축약하면 매번 경고가 난다.
     """
     out = [
+        # `rendered=<시각>` 을 넣지 않는다.  읽는 코드가 하나도 없었는데
+        # (진짜 `rendered_at` 은 `review.json` 에 있다) 매 렌더마다 1 행이
+        # 달라져, `sync` 가 아무것도 바꾸지 않아도 파일이 변했다.  에디터는
+        # 그때마다 버퍼를 되읽고 화면이 흔들린다 (`editor.md` §3.3).
         f"<!-- mrq:file schema={review.schema_version} iid={review.iid} "
-        f"head={review.diff_refs.head_sha} rendered={review.rendered_at} -->",
+        f"head={review.diff_refs.head_sha} -->",
         _HELP,
         "",
         f"# !{review.iid} {review.title}",

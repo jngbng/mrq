@@ -1,4 +1,4 @@
-<!-- mrq:file schema=1 iid=1234 head=abc1234 rendered=2026-10-11T09:12:01+09:00 -->
+<!-- mrq:file schema=1 iid=1234 head=abc1234 -->
 <!-- mrq:help
   체크박스: [ ] 미처리 · [x] 완료(resolve) · [~] 답글만 · [-] 건너뜀
   답글은 각 스레드의 `### reply` 아래에 씁니다. 표·코드블록·--- 모두 자유롭게 쓸 수 있습니다.

@@ -85,17 +85,17 @@ def edit_block(text: str, thread_id: str, *, state: str | None = None, reply: st
     return "\n".join(lines)
 
 
+def _drop_first_line(text: str) -> str:
+    """첫 줄(`mrq:file` 주석)을 뗀 나머지.  그 주석이 없는 md 를 만들 때 쓴다."""
+    return text.split("\n", 1)[1]
+
+
 def remove_block(text: str, thread_id: str) -> str:
     """블록 전체(자신의 앵커부터 다음 앵커 전까지)를 지운다."""
     lines = text.split("\n")
     start = _anchor_index(lines, thread_id)
     end = _block_end(lines, start)
     return "\n".join(lines[:start] + lines[end:])
-
-
-def _without_file_comment(text: str) -> str:
-    """렌더마다 `rendered=` 시각이 바뀌는 첫 줄을 뺀 나머지."""
-    return text.split("\n", 1)[1]
 
 
 def test_sync_applies_checkbox_and_reply(synced):
@@ -125,11 +125,9 @@ def test_sync_rerenders_md_with_new_v_hash(synced):
     assert "## [x] (general)" in after
 
     # 재렌더가 v 를 갱신했으므로 곧바로 다시 sync 해도 아무 변화가 없다.
-    # 첫 줄(`rendered=`)은 매 렌더마다 바뀌므로 그 다음부터만 비교한다.
+    # `rendered=` 를 뺀 뒤로 렌더는 바이트까지 안정이라 전체를 비교한다.
     assert main(["sync"]) == 0
-    assert _without_file_comment(_md(synced).read_text(encoding="utf-8")) == _without_file_comment(
-        after
-    )
+    assert _md(synced).read_text(encoding="utf-8") == after
 
 
 def test_sync_is_a_noop_on_untouched_file(synced):
@@ -167,6 +165,40 @@ def test_sync_json_error_payload_is_pure_json(synced, capsys):
     assert main(["sync", "--json"]) == 2
     payload = json.loads(capsys.readouterr().out)
     assert payload["errors"][0]["line"] > 0
+
+
+def test_sync_does_not_touch_review_md_when_nothing_changed(synced):
+    """아무것도 바뀌지 않으면 md 를 **쓰지 않는다** (mtime 도 그대로).
+
+    쓰면 에디터가 버퍼를 되읽고 화면이 흔들린다 — 개밥먹기에서 나온 지적이다.
+    `rendered=` 를 뺐으므로 렌더 결과가 바이트까지 같아졌고, 그러면 쓸 이유가
+    없다.
+    """
+    md = _md(synced)
+    # 픽스처는 `include_resolved=True` 로 렌더하므로 **첫** sync 는 정당하게
+    # 파일을 바꾼다 (기본 보기로 다시 그린다). 그 뒤를 본다.
+    assert main(["sync"]) == 0
+    before = md.stat().st_mtime_ns
+    before_text = md.read_text(encoding="utf-8")
+
+    assert main(["sync"]) == 0
+
+    assert md.stat().st_mtime_ns == before
+    assert md.read_text(encoding="utf-8") == before_text
+
+
+def test_sync_still_writes_review_md_when_something_changed(synced):
+    md = _md(synced)
+    before = md.stat().st_mtime_ns
+    _md(synced).write_text(
+        edit_block(md.read_text(encoding="utf-8"), "a1b2c3d4e5f6", state="done"),
+        encoding="utf-8",
+    )
+
+    assert main(["sync"]) == 0
+
+    assert md.stat().st_mtime_ns != before
+    assert "## [x] src/api/client.py" in md.read_text(encoding="utf-8")
 
 
 @pytest.fixture
@@ -556,7 +588,7 @@ def test_sync_allows_an_anchor_quoted_in_a_closed_fence(synced):
 def test_sync_refuses_md_without_the_mrq_file_comment(synced, capsys):
     before = store.review_json_path(synced, 1234).read_text(encoding="utf-8")
     text = _md(synced).read_text(encoding="utf-8")
-    _md(synced).write_text(_without_file_comment(text), encoding="utf-8")
+    _md(synced).write_text(_drop_first_line(text), encoding="utf-8")
 
     assert main(["sync"]) == 2
     assert store.review_json_path(synced, 1234).read_text(encoding="utf-8") == before

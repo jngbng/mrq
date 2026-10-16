@@ -219,8 +219,21 @@ def test_render_ends_with_exactly_one_newline():
 
 def test_render_file_comment_carries_schema_iid_head():
     first = render.render(_sample()).splitlines()[0]
-    assert first.startswith("<!-- mrq:file schema=1 iid=1234 head=abc1234 rendered=")
-    assert first.endswith("-->")
+    assert first == "<!-- mrq:file schema=1 iid=1234 head=abc1234 -->"
+
+
+def test_render_is_byte_stable_when_nothing_changed():
+    """같은 상태를 두 번 렌더하면 **바이트가 같아야 한다.**
+
+    예전에는 머리글에 `rendered=<시각>` 이 있어 매번 1 행이 달라졌다. 그러면
+    `sync` 가 아무것도 바꾸지 않아도 파일이 달라지고, 에디터는 버퍼를 통째로
+    되읽어 화면이 흔들린다 (개밥먹기 2026-10-17). 그 값을 읽는 코드는 없었다 —
+    진짜 `rendered_at` 은 `review.json` 에 있다.
+    """
+    review = model.loads(SAMPLE.read_text(encoding="utf-8"))
+    first = render.render(review, include_resolved=False)
+    review.rendered_at = "2099-01-01T00:00:00+09:00"
+    assert render.render(review, include_resolved=False) == first
 
 
 def test_render_hides_plain_resolved_thread_but_keeps_one_with_reply():

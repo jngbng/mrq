@@ -366,6 +366,20 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
         (cons (match-string-no-properties 1)
               (- here (line-number-at-pos)))))))
 
+(defun mrq-mode--revert-minimally ()
+  "디스크 내용을 **바뀐 곳만 고쳐** 버퍼에 반영한다.
+
+`revert-buffer' 는 버퍼를 통째로 갈아 끼우므로 `markdown-mode' 가 전부 다시
+칠하고 화면이 눈에 띄게 흔들린다.  `revert-buffer-with-fine-grain'(Emacs 28+)
+은 `replace-buffer-contents' 를 써서 최소 편집만 하므로, 손대지 않은 구간의
+마커와 텍스트 속성이 살아남는다.
+
+CLI 쪽에서 `rendered=<시각>` 을 뺀 것과 짝이다 — 그 값이 1 행에 있던 동안은
+매 저장마다 파일 머리가 바뀌어 \"바뀐 곳\" 이 사실상 전체였다."
+  (unless (and (fboundp 'revert-buffer-with-fine-grain)
+               (revert-buffer-with-fine-grain t t))
+    (revert-buffer t t t)))
+
 (defun mrq-mode--revert-keeping-thread ()
   "버퍼를 되읽고 point 와 **화면 위치**를 복원한다.
 
@@ -388,7 +402,7 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
          (anchor (mrq-mode--thread-at-point))
          (line (line-number-at-pos))
          (column (current-column)))
-    (revert-buffer t t t)
+    (mrq-mode--revert-minimally)
     (goto-char (point-min))
     (let ((last (line-number-at-pos (point-max))))
       (if (and anchor

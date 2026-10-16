@@ -278,6 +278,9 @@ glab api "projects/:fullpath/merge_requests/1234/discussions/<did>/notes" \
 3. local.state / local.reply 반영, touched_by = "md"
 4. 재앵커링 (reanchoring.md)
 5. review.json 쓰기, rendered_at 갱신, review.md 재렌더
+   - **렌더 결과가 디스크와 같으면 md 를 쓰지 않는다**(SHOULD). mtime 도
+     건드리지 않는다 — 건드리면 에디터가 버퍼를 되읽어 화면이 흔들린다
+     (`editor.md` §3.3). `review-md.md` §1 이 렌더의 바이트 안정성을 보장한다
 ```
 
 `mrq:file`의 `iid` 검증이 필수다(MUST). 여러 MR을 동시에 다루므로 다른 MR의 md를

@@ -776,5 +776,36 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
       ;; flymake 가 밑줄을 긋는 자리와 같은가
       (should (= (point) (car (flymake-diag-region (current-buffer) 2)))))))
 
+(ert-deftest mrq-mode-revert-edits-minimally ()
+  "되읽기가 버퍼를 **통째로 갈아 끼우면** markdown-mode 가 전부 다시 칠해
+화면이 흔들린다.
+
+`replace-buffer-contents' 기반 되읽기는 바뀐 곳만 고치므로 손대지 않은
+구간의 마커·텍스트 속성이 살아남는다.  마커 생존이 그 관측 가능한 증거다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+           (grown (replace-regexp-in-string
+                   "## \\[ \\] (general) — @kim"
+                   "## [x] (general) — @kim" mrq-mode-test--md t t))
+           (mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json
+                                              :writes (cons md grown))))
+      (should-not (equal grown mrq-mode-test--md))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        ;; 바뀌지 **않는** 구간(둘째 블록)에 마커를 둔다
+        (goto-char (point-min))
+        (search-forward "<!-- mrq:a1b2c3d4e5f6")
+        (let ((marker (point-marker)))
+          (goto-char (point-max))
+          (insert "답글\n")
+          (save-buffer)
+          ;; 통째로 갈아 끼웠다면 마커가 버퍼 처음으로 무너진다
+          (should (> (marker-position marker) 1))
+          (should (equal (save-excursion
+                           (goto-char marker)
+                           (beginning-of-line)
+                           (buffer-substring-no-properties
+                            (point) (+ (point) 21)))
+                         "<!-- mrq:a1b2c3d4e5f6")))))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

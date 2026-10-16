@@ -33,7 +33,26 @@ def write(
         review.rendered_at = now()
     store.atomic_write_text(store.review_json_path(root, review.iid), model.dumps(review))
     if md:
-        store.atomic_write_text(
+        _write_md_if_changed(
             store.review_md_path(root, review.iid),
             render.render(review, include_resolved=include_resolved),
         )
+
+
+def _write_md_if_changed(path: Path, text: str) -> None:
+    """내용이 같으면 쓰지 않는다 — mtime 도 건드리지 않는다.
+
+    `render.render` 는 같은 상태에 대해 **바이트까지 같은** 결과를 낸다
+    (머리글에서 `rendered=<시각>` 을 뺀 뒤로). 그래서 아무것도 바뀌지 않은
+    `sync` 가 파일을 건드릴 이유가 없고, 건드리면 에디터가 버퍼를 통째로
+    되읽어 화면이 흔들린다 (`editor.md` §3.3).
+
+    `review.json` 은 그대로 매번 쓴다 — `rendered_at`/`touched_at` 이 바뀌고,
+    그 파일은 사람이 열어 두는 면이 아니다.
+    """
+    try:
+        if path.read_text(encoding="utf-8") == text:
+            return
+    except OSError:
+        pass
+    store.atomic_write_text(path, text)
