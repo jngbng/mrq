@@ -92,8 +92,9 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
   켠다. 120초 예산에서 보고 싶은 것은 "남은 것"이다
 - `confidence == "stale"`은 표시하지 않는다(MUST)
 - `location == null`인 스레드는 진단을 만들지 않는다(MUST)
-- **서버에서 resolve 됐고 미전송 작업이 없는 스레드는 표시하지 않는다**
-  (`review-md.md` §5와 같은 규칙). 이 규칙이 없으면 동료가 코멘트를 resolve 한 뒤
+- **서버에서 resolve 됐고 전송 안 된 답글이 없는 스레드는 표시하지 않는다**
+  (`render.visible`, `review-md.md` §5와 **같은 규칙이어야 한다**. 판정은
+  `local.reply`로만 한다 — `local.state`는 보낸 뒤에도 `done`으로 남는다). 이 규칙이 없으면 동료가 코멘트를 resolve 한 뒤
   `review.md`·`mrq list`에서는 사라진 것이 flymake에만 남아, 사람과 AI가 다른
   집합을 본다(`decisions/0001-human-and-ai-are-peers.md`)
 - `mrq-show-handled`는 위의 상태 필터와 이 가시성 필터를 **함께 끈다** —

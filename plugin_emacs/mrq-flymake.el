@@ -72,13 +72,15 @@ resolve 됐고 내 미전송 작업이 없다.
 (defun mrq-flymake--pending-p (thread local)
   "THREAD(그 `local' 부분이 LOCAL)가 기본 보기에 남아야 하는가.
 
-서버에서 resolve 됐는데 내 미전송 작업이 없으면 아니다 — `review-md.md' §5 와
-`cli.md' §7 이 쓰는 것과 같은 규칙이다.  동료가 코멘트를 resolve 한 뒤에도
-진단이 남으면 `review.md'/`mrq list' 와 flymake 가 서로 다른 집합을 보여준다
-\(`decisions/0001-human-and-ai-are-peers.md')."
+서버에서 resolve 됐는데 **전송 안 된 답글이 없으면** 아니다 — `render.visible'
+\(`review-md.md' §5, `cli.md' §7)과 **같은 규칙이어야 한다.**  셋이 어긋나면
+`review.md'/`mrq list'/flymake 가 서로 다른 집합을 보여준다
+\(`decisions/0001-human-and-ai-are-peers.md').
+
+\"전송 안 됨\" 의 신호는 `local.reply' 하나다 — `push' 가 성공해야 비운다.
+`local.state' 로는 가를 수 없다.  보낸 뒤에도 `done' 으로 남는다."
   (or (not (eq (gethash "resolved" (gethash "server" thread)) t))
-      (not (string-empty-p (string-trim (or (gethash "reply" local) ""))))
-      (not (equal (gethash "state" local) "todo"))))
+      (not (string-empty-p (string-trim (or (gethash "reply" local) ""))))))
 
 (defun mrq-flymake--line (buffer thread location)
   "THREAD 의 LOCATION 이 가리키는 줄을 BUFFER 안에서 보정한다.

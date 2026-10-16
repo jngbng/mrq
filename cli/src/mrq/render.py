@@ -43,15 +43,23 @@ def vhash(state: str, reply: str) -> str:
 def visible(threads: list[model.Thread], *, include_resolved: bool) -> list[model.Thread]:
     """렌더 대상 스레드 (review-md.md §5).
 
-    서버에서 resolve 된 것은 기본적으로 감추지만, 전송하지 않은 작업이 있으면
+    서버에서 resolve 된 것은 기본적으로 감추지만, **전송하지 않은 답글이 있으면**
     `--all` 없이도 보여야 한다(MUST) — 동료가 내 스레드를 먼저 resolve 했을 때
     내 답글이 md 에서 사라지고 사용자는 잃은 줄도 모른다.
+
+    "전송 안 됨" 의 신호는 `local.reply` 하나다. `push` 가 성공해야 그것을
+    비우기 때문이다(`cli.md` §9). `local.state` 로는 가를 수 없다 — 보낸 뒤에도
+    `done`/`replied` 로 남으므로, 그것까지 보여 주면 **끝난 스레드가 영영
+    목록에 남아** 남은 작업에 집중할 수 없다.
+
+    서버가 이미 resolve 했으므로 `state == "done"` 이 요청하던 resolve 도 이미
+    이뤄졌다 — 그 쪽으로도 보낼 것이 없다.
     """
     out = []
     for thread in threads:
         if include_resolved or not thread.server.resolved:
             out.append(thread)
-        elif thread.local.reply.strip() or thread.local.state != "todo":
+        elif thread.local.reply.strip():
             out.append(thread)
     return out
 

@@ -111,8 +111,24 @@ def test_visible_keeps_resolved_thread_with_unsent_reply():
     assert len(render.visible(threads, include_resolved=False)) == 1
 
 
-def test_visible_keeps_resolved_thread_with_nondefault_state():
-    threads = [thread(id="aaaa1111", resolved=True, state="skipped")]
+def test_visible_hides_a_resolved_thread_with_nothing_left_to_send():
+    """push 가 끝나면 `local.reply` 는 비고 `state` 는 `done`/`replied` 로 남는다.
+
+    서버도 resolve 됐으면 **보낼 것이 하나도 없다.** 그런데도 보여 주면 남은
+    작업에 집중할 수 없다 — 개밥먹기에서 나온 지적이다. `--all` 로 되살린다.
+    """
+    for state in ("done", "replied", "skipped"):
+        threads = [thread(id="aaaa1111", resolved=True, state=state)]
+        assert render.visible(threads, include_resolved=False) == []
+        assert len(render.visible(threads, include_resolved=True)) == 1
+
+
+def test_visible_keeps_a_resolved_thread_whose_reply_is_still_unsent():
+    """전송이 안 끝난 신호는 `local.reply` 다 — push 가 성공해야 비운다.
+
+    `state` 로는 가를 수 없다. 보낸 뒤에도 `done` 으로 남기 때문이다.
+    """
+    threads = [thread(id="aaaa1111", resolved=True, state="done", reply="아직 안 보냈다")]
     assert len(render.visible(threads, include_resolved=False)) == 1
 
 

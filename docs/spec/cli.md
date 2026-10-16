@@ -408,8 +408,9 @@ f6e5d4c3  [~]  src/api/legacy.py:1    @park   `stale`  이건 의도된 동작�
 `--state`와 `--confidence`로 거른다. `--all`은 서버에서 resolve된 것도 포함한다.
 
 `--all` 없는 기본 보기는 `review-md.md` §5의 예외를 그대로 따른다(MUST) — 서버에서
-resolve된 스레드라도 전송하지 않은 작업(`local.reply`가 비어 있지 않거나
-`local.state != todo`)이 있으면 보여야 한다. 사람이 보는 `review.md`와 AI가 읽는
+resolve된 스레드라도 **전송하지 않은 답글**(`local.reply`가 비어 있지 않음)이
+있으면 보여야 한다. `local.state`는 보지 않는다 — 보낸 뒤에도 `done`으로 남아
+끝난 스레드가 목록에 영영 남는다. 사람이 보는 `review.md`와 AI가 읽는
 `list`가 서로 다른 집합을 보면 안 되기 때문이다.
 
 ### `list --json`
