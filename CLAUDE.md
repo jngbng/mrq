@@ -27,7 +27,7 @@ GitLab MR의 리뷰 코멘트를 로컬 파일로 내려받아 Emacs/VSCode/AI�
 
 ```
 cli/            Python CLI       uv, pytest, ruff
-plugin_emacs/   elisp            make + batch ERT
+plugin_emacs/   elisp            make + batch ERT, 격리된 .elpa
 plugin_vscode/  TypeScript       npm, vitest
 schema/         세 구현이 공유하는 계약
 testdata/       세 구현이 공유하는 테스트 데이터
@@ -57,6 +57,16 @@ testdata/       세 구현이 공유하는 테스트 데이터
 - **`system: true` 노트는 pull에서 전량 제외한다.** 안 걸러내면 노이즈가 절반을 넘는다.
 - **resolve 권한은 `pull`에서 확인해 `status`가 사전에 알린다.** 403을 사후 에러로
   다루지 않는다.
+- **`review.json` 이 아니라 그 디렉터리에 파일 감시를 건다.** CLI 가 `os.replace`
+  로 쓰므로 inode 가 바뀌고, 원시 inotify 에서는 파일 watch 가 첫 교체 뒤 조용히
+  죽는다. Emacs 는 파일 watch 도 부모 디렉터리를 보므로 동등하지만 VSCode 는
+  확인이 필요하다. **테스트는 두 번 연속 고쳐야 이 결함을 본다.**
+  `docs/spec/editor.md` §3.1
+- **flymake 는 "닫힌 스레드" 를 감춘다 — 서버가 닫았든(`server.resolved`) 내가
+  닫았든(`skipped`). 단 미전송 답글(`local.reply`)이 있으면 보인다.**
+  `state == todo` 로 거르면 `[~]`(답글만)와 `[x]` 미전송이 사라진다.
+  `review.md` 는 `skipped` 도 보여준다 — 거기는 결정을 바꾸는 면이다.
+  `docs/spec/editor.md` §3.1
 - **`push`는 스레드마다 결과를 즉시 json에 쓴다.** 중간에 죽어도 복구 가능해야 한다.
   중복 전송 방지는 `pushed_hash`이고, 전송 성공 시 `local.reply`를 비운다.
   `docs/spec/cli.md` §9

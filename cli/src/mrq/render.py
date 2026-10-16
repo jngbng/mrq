@@ -43,15 +43,23 @@ def vhash(state: str, reply: str) -> str:
 def visible(threads: list[model.Thread], *, include_resolved: bool) -> list[model.Thread]:
     """렌더 대상 스레드 (review-md.md §5).
 
-    서버에서 resolve 된 것은 기본적으로 감추지만, 전송하지 않은 작업이 있으면
+    서버에서 resolve 된 것은 기본적으로 감추지만, **전송하지 않은 답글이 있으면**
     `--all` 없이도 보여야 한다(MUST) — 동료가 내 스레드를 먼저 resolve 했을 때
     내 답글이 md 에서 사라지고 사용자는 잃은 줄도 모른다.
+
+    "전송 안 됨" 의 신호는 `local.reply` 하나다. `push` 가 성공해야 그것을
+    비우기 때문이다(`cli.md` §9). `local.state` 로는 가를 수 없다 — 보낸 뒤에도
+    `done`/`replied` 로 남으므로, 그것까지 보여 주면 **끝난 스레드가 영영
+    목록에 남아** 남은 작업에 집중할 수 없다.
+
+    서버가 이미 resolve 했으므로 `state == "done"` 이 요청하던 resolve 도 이미
+    이뤄졌다 — 그 쪽으로도 보낼 것이 없다.
     """
     out = []
     for thread in threads:
         if include_resolved or not thread.server.resolved:
             out.append(thread)
-        elif thread.local.reply.strip() or thread.local.state != "todo":
+        elif thread.local.reply.strip():
             out.append(thread)
     return out
 
@@ -270,8 +278,12 @@ def render(review: model.Review, *, include_resolved: bool = False) -> str:
     대조하므로(cli.md §5) 축약하면 매번 경고가 난다.
     """
     out = [
+        # `rendered=<시각>` 을 넣지 않는다.  읽는 코드가 하나도 없었는데
+        # (진짜 `rendered_at` 은 `review.json` 에 있다) 매 렌더마다 1 행이
+        # 달라져, `sync` 가 아무것도 바꾸지 않아도 파일이 변했다.  에디터는
+        # 그때마다 버퍼를 되읽고 화면이 흔들린다 (`editor.md` §3.3).
         f"<!-- mrq:file schema={review.schema_version} iid={review.iid} "
-        f"head={review.diff_refs.head_sha} rendered={review.rendered_at} -->",
+        f"head={review.diff_refs.head_sha} -->",
         _HELP,
         "",
         f"# !{review.iid} {review.title}",

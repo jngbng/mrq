@@ -6,16 +6,18 @@ test-cli:
 	cd cli && python -m pytest
 
 test-emacs:
-	@echo "plugin_emacs 는 아직 없습니다 (계획 4)"
+	$(MAKE) -C plugin_emacs test
 
 test-vscode:
 	@echo "plugin_vscode 는 아직 없습니다 (계획 5)"
 
 conformance:
-	@echo "적합성 테이블은 첫 에디터 구현과 함께 들어옵니다 (계획 4)"
+	$(MAKE) -C plugin_emacs conformance
 
 lint:
 	cd cli && ruff format --check . && ruff check .
+	$(MAKE) -C plugin_emacs lint
 
 deps:
 	cd cli && uv sync
+	$(MAKE) -C plugin_emacs deps

@@ -155,53 +155,69 @@ CLI를 루트에 두면 `pytest`가 cd 없이 돌아 편하지만 리포 루트�
 
 ### 4.1 적합성 테이블
 
-`testdata/conformance/anchor.json`을 **세 구현이 모두 읽어 같은 테이블을 돌린다**(MUST).
+`testdata/conformance/anchor.json`을 **앵커 보정을 구현하는 모든 구현이 읽어 같은
+테이블을 돌린다**(MUST). 지금은 `plugin_emacs`와 `plugin_vscode` 둘이다.
+
+CLI는 돌리지 않는다 — 저장하지 않은 버퍼가 없고(항상 디스크 파일을 읽는다), 그
+경로는 `mrq.search`가 담당하는 **다른 알고리즘**(창 50 + context 점수 + 전체 파일
+fallback)이다. 테이블을 돌리려고 CLI에 production 호출자가 없는 §6 함수를 넣으면
+`search.py` 옆에서 실제로 혼동을 만든다. 구현을 하나 더 두는 것은 생각보다 약한
+보호이기도 하다 — 같은 스펙 문장을 읽고 연달아 쓰면 같은 오독을 두 번 할 수 있고,
+그것을 막는 것은 **테이블 데이터 자체**(16건)이지 구현의 개수가 아니다.
 
 ```jsonc
 [
   { "name": "유일한 후보를 채택한다",
     "buffer": ["def f():", "    x = 1", "    y = 2"],
-    "anchor_line": "    x = 1",
-    "location_line": 1,
-    "expect": 2 },
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 2 },
 
   { "name": "후보가 둘이면 보정하지 않는다",
     "buffer": ["    x = 1", "", "    x = 1"],
-    "anchor_line": "    x = 1",
-    "location_line": 1,
-    "expect": 1 },
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 1 },
 
-  { "name": "완전 일치가 없으면 strip 일치를 쓴다",
-    "buffer": ["def f():", "        x = 1"],
-    "anchor_line": "    x = 1",
-    "location_line": 1,
-    "expect": 2 },
-
-  { "name": "창(±200) 밖은 보지 않는다",
+  { "name": "창 경계 +200 은 포함",
     "buffer_repeat": { "line": "pass", "count": 500 },
-    "buffer_insert": { "at": 400, "line": "    x = 1" },
-    "anchor_line": "    x = 1",
-    "location_line": 1,
-    "expect": 1 }
+    "buffer_set": [{ "at": 201, "line": "    x = 1" }],
+    "anchor_line": "    x = 1", "location_line": 1, "expect": 201 }
 ]
 ```
 
 | 필드 | 의미 |
 |---|---|
-| `buffer` | 버퍼 내용. 1-indexed 줄 배열 |
-| `buffer_repeat` / `buffer_insert` | 큰 버퍼를 json에 펼치지 않고 생성한다. `buffer`와 배타적 |
+| `name` | 케이스 설명. 실패 메시지에 그대로 나온다 |
+| `buffer` | 버퍼 내용. 줄 배열 |
+| `buffer_repeat` | `{line, count}` — 큰 버퍼를 json에 펼치지 않고 생성. `buffer`와 배타적 |
+| `buffer_set` | `[{at, line}]` — `at`번째 줄을 **치환**한다. 길이는 `count` 그대로이고 순서에 무관하다. `buffer_repeat`와만 함께 쓴다 |
 | `anchor_line` | `anchor.line` 값 |
 | `location_line` | `location.line` 값 (검색 시작점) |
-| `expect` | 보정 결과로 기대하는 줄 번호. 보정하지 않으면 `location_line`과 같다 |
+| `expect` | 기대 줄 번호. 보정하지 않으면 `location_line`과 같다 |
+
+**줄 번호는 전부 1-indexed 다.** 치환(`buffer_set`)이지 삽입이 아닌 이유는, 삽입이면
+뒤 줄이 전부 밀려 기대값 계산이 어긋나기 쉽고 후보를 둘 심는 케이스에서 순서
+의존이 생기기 때문이다.
 
 하나가 어긋나면 그 구현의 테스트가 깨진다. 스펙 문장보다 강한 강제이며, 유일하게
 중복된 로직에 정확히 걸린다.
 
+**테이블이 가르지 못하는 것 하나를 적어 둔다.** "완전 일치 후보가 둘 이상이면
+`strip` 단계로 내려가지 않는다"는 **관측 가능한 효과가 없다** — 공백뿐이 아닌
+앵커에서 strip 일치 집합은 exact 일치 집합을 항상 포함하므로, exact가 둘이면
+strip도 둘 이상이고 어느 설계든 보정하지 않는다. 두 번째 구현이 이 점에서 어긋날
+수 **없다**는 뜻이기도 하다.
+
+나머지는 변형 테스트로 테이블이 실제로 잡는 것을 확인했다 — 창 크기, 창 경계의
+포함 여부, 공백뿐인 앵커의 strip 생략, trailing 공백 흡수, 그리고 **두 단계의
+유일성 가드 각각**. exact 단계의 가드는 "거리가 다른 exact 후보 둘" 케이스가
+있어야 잡힌다(없으면 "가장 가까운 것을 고르고 동점이면 포기"하는 구현이 전부
+통과한다). strip 단계의 가드는 그것과 별도의 케이스가 필요하다.
+
 ### 4.2 스키마 교차 검증
 
-세 구현 모두 `testdata/review/*.json`을 `schema/review.schema.json`으로 검증해야
-한다(MUST). Python은 `jsonschema`, TypeScript는 `ajv`, Emacs는 최소한 필수 필드와
-`enum` 값을 확인한다.
+세 구현 모두 `testdata/review/*.json`을 검증해야 한다(MUST). Python은
+`jsonschema`, TypeScript는 `ajv`, Emacs는 `mrq-schema-test.el`이 **실제 리더로
+읽어** 필수 필드와 `enum` 값을 확인한다 — 별도 검증기를 두지 않고 리더를
+통과시키는 이유는, 잡으려는 드리프트가 "CLI가 쓴 것을 에디터가 못 읽는 것"
+이기 때문이다. 스키마만 따로 검사하면 리더가 거부하는 경우를 놓친다.
 
 ---
 
