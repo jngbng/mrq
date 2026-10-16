@@ -63,8 +63,20 @@
 (define-key mrq-mode-command-map (kbd "r") #'mrq-mode-visit)
 (define-key mrq-mode-map (kbd "C-c m") mrq-mode-command-map)
 
+(defconst mrq-log-re "^\\(review\\.md\\):\\([0-9]+\\): "
+  "`*mrq*' 의 점프 가능한 줄.  `cli.md' §5 의 `review.md:<line>: <message>'.
+
+`mrq' 항목(`mrq-mode-header-re')과 **다른 것**이다 — 그쪽은 `review.md' 안의
+헤더(`## [x] path:line')를 잡고, 이쪽은 CLI 가 보고한 md 의 줄을 잡는다.
+둘을 섞어 쓰면 `*mrq*' 에서 `RET' 이 \"No error here\" 만 낸다.
+
+위치 없는 경고(`cli.md' §5 의 `line: null')는 접두사가 없으므로 잡히지
+않는다 — 가짜 위치를 만들지 않는다는 규범이 그대로 지켜진다.")
+
 (add-to-list 'compilation-error-regexp-alist-alist
              (list 'mrq mrq-mode-header-re 1 2))
+(add-to-list 'compilation-error-regexp-alist-alist
+             (list 'mrq-log mrq-log-re 1 2))
 
 ;;;###autoload
 (define-derived-mode mrq-mode markdown-mode "MRQ"
@@ -334,7 +346,7 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
       (let ((inhibit-read-only t))
         (unless (derived-mode-p 'compilation-mode)
           (compilation-mode)
-          (setq-local compilation-error-regexp-alist '(mrq)))
+          (setq-local compilation-error-regexp-alist '(mrq-log)))
         (when dir (setq-local default-directory dir))
         (goto-char (point-max))
         (insert text "\n")))))
@@ -350,22 +362,27 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
               (- here (line-number-at-pos)))))))
 
 (defun mrq-mode--revert-keeping-thread ()
-  "버퍼를 되읽고 point 를 **스레드 id 기준**으로 복원한다.
+  "버퍼를 되읽고 point 와 **화면 위치**를 복원한다.
 
 줄 번호로 복원하면 재렌더로 앞 블록의 줄 수가 바뀔 때마다 커서가 흘러간다 —
-답글을 쓸 때마다 일어난다.
+답글을 쓸 때마다 일어난다.  그래서 스레드 id 기준으로 잡는다.
 
-두 가지를 함께 지킨다:
+세 가지를 함께 지킨다:
 
 - 오프셋이 **그 블록을 넘지 않게** 자른다.  `sync' 는 답글을 정규형으로 다시
   쓰므로(`render.normalize_reply') 블록이 줄어드는 것이 정상 경로이고, 그대로
   두면 커서가 다음 스레드로 흘러간다.
 - 앵커가 아예 사라졌으면(서버에서 resolve 돼 재렌더가 생략, `review-md.md' §5)
   **버퍼 맨 처음으로 보내지 않는다.**  답글을 쓰던 사용자가 문서 꼭대기로
-  튕기는 것보다, 있던 줄 근처에 두는 쪽이 낫다."
-  (let ((anchor (mrq-mode--thread-at-point))
-        (line (line-number-at-pos))
-        (column (current-column)))
+  튕기는 것보다, 있던 줄 근처에 두는 쪽이 낫다.
+- **화면 위치(window-start)도 복원한다.**  복원이 `point-min' 을 거쳐 가므로
+  그대로 두면 point 는 맞는데 화면만 맨 위로 튄다 — 긴 `review.md' 에서는
+  그게 자리를 잃는 것과 같다."
+  (let* ((window (get-buffer-window (current-buffer)))
+         (above (and window (count-lines (window-start window) (point))))
+         (anchor (mrq-mode--thread-at-point))
+         (line (line-number-at-pos))
+         (column (current-column)))
     (revert-buffer t t t)
     (goto-char (point-min))
     (let ((last (line-number-at-pos (point-max))))
@@ -382,7 +399,11 @@ MUST NOT).  `review.md:0' 도 1 행도 쓰지 않고 접두사 없는 평문으�
                               last))))
               (forward-line (- (min (+ head (cdr anchor)) limit) head))))
         (forward-line (1- (min line last)))))
-    (move-to-column column)))
+    (move-to-column column)
+    (when (and window above (window-live-p window))
+      (set-window-start window
+                        (save-excursion (forward-line (- above)) (point))
+                        t))))
 
 
 ;;;###autoload

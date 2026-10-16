@@ -649,5 +649,98 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
       (should-not (equal gone mrq-mode-test--md))   ; 픽스처가 실제로 지워졌는가
       (should (> (cdr lines) 1)))))
 
+(ert-deftest mrq-reply-at-point-works-anywhere-on-the-line ()
+  "진단 영역은 **첫 비공백**에서 시작한다 (`flymake-diag-region').
+
+소스 코드는 들여쓰기가 있는 것이 보통이라, 줄 맨 앞에서 `C-c m r' 을 누르면
+\"여기에 MR 코멘트가 없습니다\" 가 떴다.  반대 방향(`review.md' -> 소스)은
+줄 맨 앞으로 보내므로 동작이 쌍이 맞지 않았다."
+  (let ((anchor (mrq-flymake-test--anchor-line "f6a1b2c3d4e5"))
+        (line (mrq-flymake-test--location-line "f6a1b2c3d4e5")))
+    (should (string-prefix-p " " anchor))      ; 들여쓰기가 있는 줄인가
+    (mrq-test-with-repo (root :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--filler line anchor))))
+      (write-region (concat "<!-- mrq:f6a1b2c3d4e5 v:000001 -->\n"
+                            "## [ ] src/api/retry.py:14 — @x\n\n### reply\n\n")
+                    nil (expand-file-name ".mrq/1234/review.md" root) nil 'quiet)
+      (with-current-buffer (find-file-noselect
+                            (expand-file-name "src/api/retry.py" root))
+        (mrq-setup)
+        (flymake-start nil t)
+        (goto-char (flymake-diagnostic-beg (car (flymake-diagnostics))))
+        (beginning-of-line)                     ; 들여쓰기 **앞**
+        (should (= (current-column) 0))
+        (should (equal (mrq-flymake-thread-at-point) "f6a1b2c3d4e5"))
+        (mrq-reply-at-point)
+        (should (equal (file-name-nondirectory (buffer-file-name)) "review.md"))))))
+
+(ert-deftest mrq-log-buffer-can-jump-to-the-reported-line ()
+  "`*mrq*' 에서 `RET' 이 \"No error here\" 만 뜨면 경고를 보여줄 이유가 없다.
+
+`review.md:142: ...' 를 잡는 정규식이 필요하다 — `mrq' 항목은 `review.md' 의
+**헤더**(`## [x] path:line')용이라 로그 줄을 못 잡는다."
+  (require 'compile)
+  (let ((entry (assq 'mrq-log compilation-error-regexp-alist-alist)))
+    (should entry)
+    (let ((re (cadr entry))
+          (line "review.md:142: 앵커 다음 줄이 헤더가 아님"))
+      (should (string-match re line))
+      (should (equal (match-string 1 line) "review.md"))
+      (should (equal (match-string 2 line) "142"))
+      ;; 위치 없는 경고는 접두사가 없으므로 잡히면 안 된다
+      (should-not (string-match re "a1b2c3d4: 답글이 있는데 상태가 todo 입니다")))))
+
+(ert-deftest mrq-log-buffer-uses-the-log-regexp-not-the-header-one ()
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\n")))
+    (let ((mrq-executable
+           (mrq-test-fake-cli
+            root :code 2
+            :stdout "{\"errors\":[{\"line\":3,\"message\":\"체크박스 문자\"}]}")))
+      (with-current-buffer (mrq-mode-test--open root mrq-mode-test--md)
+        (goto-char (point-max))
+        (insert "답글\n")
+        (save-buffer)
+        (with-current-buffer mrq-mode-buffer-name
+          (should (equal compilation-error-regexp-alist '(mrq-log)))
+          (goto-char (point-min))
+          (should (re-search-forward "review\\.md:3:" nil t)))))))
+
+(ert-deftest mrq-mode-save-keeps-the-scroll-position ()
+  "point 가 맞아도 **화면이 맨 위로 튀면** 답글을 쓰던 자리를 잃는다.
+
+복원이 `point-min' 을 거쳐 가면 window-start 가 끌려간다.  point 와 화면의
+상대 위치를 함께 복원해야 한다."
+  (let* ((blocks (mapconcat
+                  (lambda (i)
+                    (format (concat "<!-- mrq:%012x v:%06x -->\n"
+                                    "## [ ] src/a.py:%d — @x\n\n### reply\n\n\n")
+                            (+ #xa1b200000000 i) i (1+ i)))
+                  (number-sequence 1 40) ""))
+         (grown (replace-regexp-in-string "v:000001" "v:0000ff" blocks t t)))
+    (mrq-test-with-repo (root :files '(("src/a.py" . "x\n")))
+      (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+             (mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json
+                                                :writes (cons md grown))))
+        (write-region blocks nil md nil 'quiet)
+        (with-current-buffer (find-file-noselect md)
+          (set-window-buffer (selected-window) (current-buffer))
+          (goto-char (point-min))
+          (search-forward "<!-- mrq:a1b200000020")
+          (search-forward "### reply")
+          (forward-line 1)
+          (recenter 5)
+          (should (> (line-number-at-pos (window-start)) 1))   ; 실제로 스크롤된 상태인가
+          (insert "답글\n")
+          ;; `above' 는 **저장 직전**에 잰다 — 보존해야 하는 것이 그 상태다
+          (let ((start (line-number-at-pos (window-start)))
+                (above (count-lines (window-start) (point))))
+            (save-buffer)
+            ;; 화면이 맨 위로 튀지 않았다
+            (should (> (line-number-at-pos (window-start)) 1))
+            ;; 화면 위치가 거의 그대로이고, point 가 창 안에 있다
+            (should (< (abs (- (line-number-at-pos (window-start)) start)) 3))
+            (should (< (abs (- (count-lines (window-start) (point)) above)) 3))
+            (should (>= (point) (window-start)))))))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

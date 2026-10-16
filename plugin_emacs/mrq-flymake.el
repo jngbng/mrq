@@ -152,8 +152,19 @@ rename 은 여전히 CLI 의 git 매핑이 필요하고 `mrq-reanchor' 가 그�
 
 ;;;###autoload
 (defun mrq-flymake-thread-at-point (&optional position)
-  "POSITION(기본 `point')의 진단이 가리키는 thread id.  없으면 nil."
-  (let ((diagnostics (flymake-diagnostics (or position (point)))))
+  "POSITION(기본 `point')의 진단이 가리키는 thread id.  없으면 nil.
+
+point 에 걸린 것이 없으면 **그 줄 전체**에서 찾는다.  진단 영역은 첫 비공백에서
+시작하는데(`flymake-diag-region') 소스 코드는 들여쓰기가 있는 것이 보통이라,
+줄 맨 앞에서 부르면 아무것도 못 찾았다.  반대 방향(`review.md' -> 소스)은 줄
+맨 앞으로 보내므로 동작이 쌍이 맞지 않았다."
+  (let* ((at (or position (point)))
+         (diagnostics
+          (or (flymake-diagnostics at)
+              (save-excursion
+                (goto-char at)
+                (flymake-diagnostics (line-beginning-position)
+                                     (line-end-position))))))
     (and diagnostics (flymake-diagnostic-data (car diagnostics)))))
 
 (defun mrq-flymake-refresh (dir)
