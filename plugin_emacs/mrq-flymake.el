@@ -43,19 +43,17 @@
 
 LOCAL 은 THREAD 의 `local' 해시테이블이다.
 
-띄우지 않는 조건 넷 — `location' 이 없다(MUST, `mrq-core-threads-for' 가 이미
-걸렀다), `confidence' 가 `stale' 이다(MUST), 처리된 상태다(SHOULD), 서버에서
-resolve 됐고 내 미전송 작업이 없다.
+띄우지 않는 조건 셋 — `location' 이 없다(MUST, `mrq-core-threads-for' 가 이미
+걸렀다), `confidence' 가 `stale' 이다(MUST), **닫힌 스레드다**(SHOULD).
 
 `stale' 을 띄우지 않는 이유는 틀린 위치에 붙은 진단이 위치 신뢰를 잃는 가장
-빠른 길이기 때문이다 (`data-model.md' §4.9).  뒤의 둘은 `mrq-show-handled' 가
-함께 끈다."
+빠른 길이기 때문이다 (`data-model.md' §4.9).  마지막 것은 `mrq-show-handled'
+가 끈다."
   (let ((location (gethash "location" thread))
         (local (gethash "local" thread)))
     (when (and (not (equal (gethash "confidence" location) "stale"))
                (or mrq-show-handled
-                   (and (equal (gethash "state" local) "todo")
-                        (mrq-flymake--pending-p thread local))))
+                   (mrq-flymake--open-p thread local)))
       (let* ((line (mrq-flymake--line buffer thread location))
              (end-line (mrq-flymake--end-line location line))
              (region (mrq-flymake--region buffer line end-line)))
@@ -69,18 +67,28 @@ resolve 됐고 내 미전송 작업이 없다.
            ;; 세션 내내 **disabled** 로 남아 진단이 조용히 사라진다.
            (list (cons 'mrq-thread-id (gethash "id" thread)))))))))
 
-(defun mrq-flymake--pending-p (thread local)
+(defun mrq-flymake--open-p (thread local)
   "THREAD(그 `local' 부분이 LOCAL)가 기본 보기에 남아야 하는가.
 
-서버에서 resolve 됐는데 **전송 안 된 답글이 없으면** 아니다 — `render.visible'
-\(`review-md.md' §5, `cli.md' §7)과 **같은 규칙이어야 한다.**  셋이 어긋나면
-`review.md'/`mrq list'/flymake 가 서로 다른 집합을 보여준다
-\(`decisions/0001-human-and-ai-are-peers.md').
+**닫힌 것은 숨긴다 — 서버가 닫았든 내가 닫았든.  단 미전송 답글이 있으면
+보인다.**
 
-\"전송 안 됨\" 의 신호는 `local.reply' 하나다 — `push' 가 성공해야 비운다.
-`local.state' 로는 가를 수 없다.  보낸 뒤에도 `done' 으로 남는다."
-  (or (not (eq (gethash "resolved" (gethash "server" thread)) t))
-      (not (string-empty-p (string-trim (or (gethash "reply" local) ""))))))
+- 서버가 닫음: `server.resolved'
+- 내가 닫음: `local.state' 가 `skipped'
+- 미전송 답글: `local.reply' 가 비어 있지 않음.  `push' 가 성공해야 비우므로
+  (`cli.md' §9) 이것이 \"아직 보낼 것이 있다\" 의 유일한 신호다.
+  `local.state' 로는 가를 수 없다 — 보낸 뒤에도 `done' 으로 남는다
+
+`state == \"todo\"' 만 보여 주던 예전 규칙은 `[~]'(답글만)과 `[x]'(미전송)를
+소스 버퍼에서 지웠다.  `[~]' 는 `push' 가 resolve 하지 않으므로 서버에서
+계속 열려 있는 대화이고, `[x]' 미전송은 아직 내가 보낼 것이 남은 상태다.
+
+**`review.md' 와 한 줄 다르다** — 거기서는 `skipped' 도 보인다.  그 면은
+결정을 **바꾸는** 곳이라 건너뛴 것을 숨기면 되돌릴 수가 없고, 소스 버퍼는
+**남은 일**을 보는 곳이다 (`editor.md' §3.1)."
+  (or (not (string-empty-p (string-trim (or (gethash "reply" local) ""))))
+      (and (not (eq (gethash "resolved" (gethash "server" thread)) t))
+           (not (equal (gethash "state" local) "skipped")))))
 
 (defun mrq-flymake--line (buffer thread location)
   "THREAD 의 LOCATION 이 가리키는 줄을 BUFFER 안에서 보정한다.

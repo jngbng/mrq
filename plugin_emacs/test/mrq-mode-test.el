@@ -314,14 +314,21 @@
 
 상태나 답글을 추출하지 않고 점만 옮긴다 — 틀려야 커서가 엉뚱한 데 가고
 사용자가 즉시 본다."
-  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+  ;; 짧은 버퍼에서는 102행·7행이 모두 마지막 줄로 clamp 돼 flymake 가 같은
+  ;; 영역의 오버레이를 합친다 — 두 스레드가 다른 줄에 앉도록 길게 만든다.
+  (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
+                                               (mrq-flymake-test--lines 320))))
     (write-region mrq-mode-test--md nil
                   (expand-file-name ".mrq/1234/review.md" root) nil 'quiet)
     (with-current-buffer (find-file-noselect
                           (expand-file-name "src/api/client.py" root))
       (mrq-setup)
       (flymake-start nil t)
-      (let ((diag (car (flymake-diagnostics))))
+      ;; client.py 에는 진단이 둘이다 (a1b2 미처리, d4e5 미전송 답글).
+      ;; md 픽스처에 블록이 있는 a1b2 를 지목한다.
+      (let ((diag (seq-find (lambda (d) (equal (flymake-diagnostic-data d)
+                                               "a1b2c3d4e5f6"))
+                            (flymake-diagnostics))))
         (should diag)
         (goto-char (flymake-diagnostic-beg diag)))
       (mrq-reply-at-point)
@@ -473,12 +480,16 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
       (with-current-buffer (find-file-noselect file)
         (mrq-flymake-setup)
         (flymake-start nil t)
-        (should (= (length (flymake-diagnostics)) 1))
-        ;; AI 가 그 스레드를 처리한 것처럼 json 을 바꾼다 -> 기본 보기에서 사라진다
+        (should (= (length (flymake-diagnostics)) 2))
+        ;; 전부 **닫힌** 것처럼 json 을 바꾼다 (내가 건너뜀 + 답글 비움)
+        ;; -> 기본 보기에서 사라진다
         (mrq-test-write-review
          root 1234
          (replace-regexp-in-string
-          "\"state\": \"todo\"" "\"state\": \"done\"" (mrq-test-sample-review) t t))
+          "\"reply\": \"[^\"]*\"" "\"reply\": \"\""
+          (replace-regexp-in-string "\"state\": \"[a-z]+\"" "\"state\": \"skipped\""
+                                    (mrq-test-sample-review) t t)
+          t t))
         (should (mrq-test-wait-for (lambda () (null (flymake-diagnostics)))))))))
 
 (ert-deftest mrq-minor-mode-binds-flymake-navigation ()
@@ -582,7 +593,8 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
   "다른 윈도우에 열면 배치가 틀어져 혼란스럽다.
 
 소스 -> review.md -> (C-c m r) -> 소스 가 같은 창에서 오간다."
-  (mrq-test-with-repo (root :files '(("src/api/client.py" . "a\nb\nc\nd\ne\n")))
+  (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
+                                               (mrq-flymake-test--lines 320))))
     (write-region mrq-mode-test--md nil
                   (expand-file-name ".mrq/1234/review.md" root) nil 'quiet)
     (let* ((source (find-file-noselect (expand-file-name "src/api/client.py" root)))
@@ -595,7 +607,10 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
         (with-current-buffer source
           (mrq-setup)
           (flymake-start nil t)
-          (goto-char (flymake-diagnostic-beg (car (flymake-diagnostics))))
+          (goto-char (flymake-diagnostic-beg
+                      (seq-find (lambda (d) (equal (flymake-diagnostic-data d)
+                                                   "a1b2c3d4e5f6"))
+                                (flymake-diagnostics))))
           (mrq-reply-at-point))
         ;; 내가 있던 창이 review.md 를 보여준다
         (should (equal (file-name-nondirectory

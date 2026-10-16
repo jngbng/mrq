@@ -37,14 +37,69 @@
   "FILE 의 진단이 가리키는 thread id 들."
   (mapcar #'flymake-diagnostic-data (mrq-flymake-test--diagnostics file)))
 
-(ert-deftest mrq-flymake-shows-only-unhandled-by-default ()
+(ert-deftest mrq-flymake-shows-the-same-set-as-review-md ()
+  "기본 보기는 `render.visible' 과 **같은 집합**이다.
+
+`state == todo' 만 보여 주면 `[~]'(답글만)·`[x]'(미전송)가 소스 버퍼에서
+사라진다 — `review.md' 와 `mrq list' 에는 보이는데.  세 면이 어긋나는 것을
+`decisions/0001' 이 막으려 한다."
   (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
                                            (mrq-flymake-test--lines 320))))
-    (let ((diags (mrq-flymake-test--diagnostics
-                  (expand-file-name "src/api/client.py" root))))
-      (should (= (length diags) 1))
-      (should (eq (flymake-diagnostic-type (car diags)) :note))
-      (should (equal (flymake-diagnostic-data (car diags)) "a1b2c3d4e5f6")))))
+    (let ((ids (mrq-flymake-test--ids (expand-file-name "src/api/client.py" root))))
+      ;; a1b2: todo 미resolve -> 보임
+      (should (member "a1b2c3d4e5f6" ids))
+      ;; d4e5: done + resolve 됐지만 **미전송 답글이 있다** -> 보임
+      (should (member "d4e5f6a1b2c3" ids))
+      ;; e5f6: todo + resolve + 보낼 것 없음 -> 숨김
+      (should-not (member "e5f6a1b2c3d4" ids))
+      (should (= (length ids) 2)))))
+
+(ert-deftest mrq-flymake-shows-a-reply-only-thread ()
+  "`[~]`(답글만 달기)는 서버에서 열려 있는 스레드다 — 숨기면 안 된다.
+
+`push` 가 resolve 하지 않으므로 대화가 계속된다.  개밥먹기에서 나온 지적."
+  (let ((text (mrq-flymake-test--with-state "f6a1b2c3d4e5" "replied")))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (should (member "f6a1b2c3d4e5"
+                      (mrq-flymake-test--ids
+                       (expand-file-name "src/api/retry.py" root)))))))
+
+(ert-deftest mrq-flymake-hides-a-skipped-thread ()
+  "`[-]`(건너뜀)은 **내가 닫은** 스레드다 — 보낼 것도 할 일도 없다.
+
+서버가 닫은 것을 숨기는 것과 같은 이유다.  숨기지 않으면 \"남은 작업에
+집중할 수 없다\" 가 그대로 돌아온다.  `review.md' 에는 남는다 — 거기는 결정을
+**바꾸는** 면이라 건너뛴 것도 보여야 한다."
+  (let ((text (mrq-flymake-test--with-state "f6a1b2c3d4e5" "skipped")))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (should-not (member "f6a1b2c3d4e5"
+                          (mrq-flymake-test--ids
+                           (expand-file-name "src/api/retry.py" root)))))))
+
+(ert-deftest mrq-flymake-shows-a-skipped-thread-with-an-unsent-reply ()
+  "건너뛰면서 이유를 적어 뒀다면 그것은 아직 보낼 것이다."
+  (let ((text (mrq-flymake-test--with-state
+               "f6a1b2c3d4e5" "skipped" "의도된 동작입니다")))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (should (member "f6a1b2c3d4e5"
+                      (mrq-flymake-test--ids
+                       (expand-file-name "src/api/retry.py" root)))))))
+
+(ert-deftest mrq-flymake-shows-a-done-thread-that-is-not-sent-yet ()
+  "`[x]` 로 표시만 하고 아직 push 하지 않았으면 남은 작업이다."
+  (let ((text (mrq-flymake-test--with-state "f6a1b2c3d4e5" "done")))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (should (member "f6a1b2c3d4e5"
+                      (mrq-flymake-test--ids
+                       (expand-file-name "src/api/retry.py" root)))))))
 
 (ert-deftest mrq-flymake-hides-a-thread-a-colleague-resolved ()
   "`review.md' 와 `mrq list' 가 감추는 것을 flymake 도 감춘다.
@@ -241,6 +296,15 @@ span 을 그렇게 잃는다."
     (dotimes (i (+ at 5))
       (push (if (= (1+ i) at) text "pass") lines))
     (concat (string-join (nreverse lines) "\n") "\n")))
+
+(defun mrq-flymake-test--with-state (id state &optional reply)
+  "ID 스레드의 `local.state' 를 STATE 로, 있으면 `local.reply' 를 REPLY 로."
+  (let* ((review (json-parse-string (mrq-test-sample-review)))
+         (thread (seq-find (lambda (th) (equal (gethash "id" th) id))
+                           (gethash "threads" review))))
+    (puthash "state" state (gethash "local" thread))
+    (when reply (puthash "reply" reply (gethash "local" thread)))
+    (json-serialize review)))
 
 (defun mrq-flymake-test--with-reply (id reply)
   "ID 스레드의 `local.reply' 에 REPLY 를 넣은 `review.json' 문자열."

@@ -88,17 +88,29 @@ git 호출이 아니고, 한 번에 리포 루트와 리뷰 디렉터리를 모�
 ```
 
 - severity는 `:note`를 쓴다(MUST). 컴파일 에러와 섞이지 않는다
-- 기본적으로 `local.state == "todo"`만 표시한다(SHOULD). `mrq-show-handled`로 전체를
-  켠다. 120초 예산에서 보고 싶은 것은 "남은 것"이다
-- `confidence == "stale"`은 표시하지 않는다(MUST)
-- `location == null`인 스레드는 진단을 만들지 않는다(MUST)
-- **서버에서 resolve 됐고 전송 안 된 답글이 없는 스레드는 표시하지 않는다**
-  (`render.visible`, `review-md.md` §5와 **같은 규칙이어야 한다**. 판정은
-  `local.reply`로만 한다 — `local.state`는 보낸 뒤에도 `done`으로 남는다). 이 규칙이 없으면 동료가 코멘트를 resolve 한 뒤
-  `review.md`·`mrq list`에서는 사라진 것이 flymake에만 남아, 사람과 AI가 다른
-  집합을 본다(`decisions/0001-human-and-ai-are-peers.md`)
-- `mrq-show-handled`는 위의 상태 필터와 이 가시성 필터를 **함께 끈다** —
-  `mrq list --all`과 같은 집합이 된다. `location`/`stale` 규칙은 MUST라 끄지 않는다
+- **닫힌 스레드는 표시하지 않는다**(SHOULD) — 서버가 닫았든 내가 닫았든.
+  단 **전송 안 된 답글이 있으면 보인다.** `mrq-show-handled`가 이 필터를 끈다
+
+  | 신호 | 뜻 |
+  |---|---|
+  | `server.resolved` | 서버가 닫음 |
+  | `local.state == "skipped"` | 내가 닫음 |
+  | `local.reply`가 비어 있지 않음 | 아직 보낼 것이 있다 — 위 둘을 덮는다 |
+
+  `local.reply`가 "아직 보낼 것" 의 **유일한** 신호다. `push`가 성공해야 그것을
+  비우기 때문이다(`cli.md` §9). `local.state`로는 가를 수 없다 — 보낸 뒤에도
+  `done`으로 남는다
+
+  **`state == "todo"`만 표시하던 예전 규칙은 틀렸다.** `[~]`(답글만)는 `push`가
+  resolve하지 않으므로 서버에서 계속 열려 있는 **살아 있는 대화**인데 소스
+  버퍼에서 사라졌고, `[x]` 미전송도 아직 내가 보낼 것이 남았는데 사라졌다.
+  120초 예산에서 보고 싶은 "남은 것"은 `todo`가 아니라 **닫히지 않은 것**이다
+
+  **`review.md`와 한 줄 다르다** — 거기서는 `skipped`도 보인다(`review-md.md`
+  §5). 그 면은 결정을 **바꾸는** 곳이라 건너뛴 것을 숨기면 되돌릴 수가 없고,
+  소스 버퍼는 **남은 일**을 보는 곳이다. 나머지 행은 두 면이 같아야 한다
+  (`decisions/0001-human-and-ai-are-peers.md`)
+
 - `confidence == "fuzzy"`는 메시지에 `[fuzzy]`를 붙인다(SHOULD)
 - 메시지는 한 줄: `@jdoe: 타임아웃 설정이 빠졌습니다… [fuzzy]`
 - 진단마다 thread id를 text property로 달아 `mrq-reply-at-point`가 쓸 수 있게 한다(MUST)
