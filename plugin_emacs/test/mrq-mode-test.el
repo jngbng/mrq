@@ -807,5 +807,37 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
                             (point) (+ (point) 21)))
                          "<!-- mrq:a1b2c3d4e5f6")))))))
 
+(ert-deftest mrq-mode-save-does-not-drift-the-scroll ()
+  "저장을 거듭해도 화면이 한 줄씩 밀리면 안 된다.
+
+`count-lines' 는 끝 위치가 줄 시작이 **아니면** 1 을 더한다.  그래서 커서가
+줄 중간에 있을 때만 오프셋이 1 커지고, 매 저장마다 `window-start' 가 한 줄씩
+뒤로 가 본문이 아래로 밀렸다 (개밥먹기 2026-10-17).  열 0 에서는 안 나던
+증상이라 기존 테스트가 놓쳤다."
+  (let ((blocks (mapconcat
+                 (lambda (i)
+                   (format (concat "<!-- mrq:%012x v:%06x -->\n"
+                                   "## [ ] src/a.py:%d — @x\n\n### reply\n\n본문 %d\n\n")
+                           (+ #xa1b200000000 i) i (1+ i) i))
+                 (number-sequence 1 60) "")))
+    (mrq-test-with-repo (root :files '(("src/a.py" . "x\n")))
+      (let* ((md (expand-file-name ".mrq/1234/review.md" root))
+             (mrq-executable (mrq-test-fake-cli root :stdout mrq-mode-test--ok-json)))
+        (write-region blocks nil md nil 'quiet)
+        (with-current-buffer (find-file-noselect md)
+          (set-window-buffer (selected-window) (current-buffer))
+          (goto-char (point-min))
+          (search-forward "<!-- mrq:a1b200000020")
+          (search-forward "### reply")
+          (forward-line 2)
+          (end-of-line)                        ; **열 > 0** — 여기서만 났다
+          (should (> (current-column) 0))
+          (recenter 5)
+          (let ((start (line-number-at-pos (window-start))))
+            (dotimes (_ 4)
+              (set-buffer-modified-p t)
+              (save-buffer))
+            (should (= (line-number-at-pos (window-start)) start))))))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

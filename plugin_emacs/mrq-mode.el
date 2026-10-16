@@ -398,7 +398,11 @@ CLI 쪽에서 `rendered=<시각>` 을 뺀 것과 짝이다 — 그 값이 1 행�
   그대로 두면 point 는 맞는데 화면만 맨 위로 튄다 — 긴 `review.md' 에서는
   그게 자리를 잃는 것과 같다."
   (let* ((window (get-buffer-window (current-buffer)))
-         (above (and window (count-lines (window-start window) (point))))
+         ;; `count-lines' 를 쓰면 안 된다 — 끝 위치가 줄 시작이 **아니면** 1 을
+         ;; 더하므로, 커서가 줄 중간에 있을 때만 오프셋이 1 커져 매 저장마다
+         ;; 화면이 한 줄씩 밀린다.  줄 번호 차는 열과 무관하다.
+         (above (and window (- (line-number-at-pos (point))
+                               (line-number-at-pos (window-start window)))))
          (anchor (mrq-mode--thread-at-point))
          (line (line-number-at-pos))
          (column (current-column)))
