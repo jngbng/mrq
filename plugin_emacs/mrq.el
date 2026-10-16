@@ -87,5 +87,31 @@
     (mrq-flymake-setup)
     (mrq-minor-mode 1)))
 
+(defconst mrq-files
+  '("mrq-core" "mrq-anchor" "mrq-cli" "mrq-flymake"
+    "mrq-conflict" "mrq-mode" "mrq")
+  "의존 순서대로 나열한 이 패키지의 파일들.  `mrq-reload' 가 쓴다.")
+
+;;;###autoload
+(defun mrq-reload ()
+  "고친 파일을 **전부** 다시 읽고 켜진 버퍼의 진단을 새로 돌린다.
+
+개발 중에 쓰는 명령이다.  한 파일만 `load-library' 하면 다른 파일에 새로
+생긴 변수나 함수가 void 로 남아 백엔드가 죽는다 — 실제로 `mrq-flymake.el'
+만 읽어 `mrq-message-width' 가 void 가 된 적이 있고, 그때 진단이 조용히
+0 개가 됐다."
+  (interactive)
+  (dolist (file mrq-files)
+    (load-library file))
+  (let ((count 0))
+    (dolist (buffer (buffer-list))
+      (with-current-buffer buffer
+        (when (and buffer-file-name (bound-and-true-p mrq-minor-mode))
+          (setq count (1+ count))
+          (when (bound-and-true-p flymake-mode)
+            (flymake-start t)))))
+    (message "mrq: %d개 파일을 다시 읽고 버퍼 %d개를 갱신했습니다"
+             (length mrq-files) count)))
+
 (provide 'mrq)
 ;;; mrq.el ends here

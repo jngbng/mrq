@@ -39,8 +39,13 @@ Emacs 는 로그인 셸의 PATH 를 못 받는 경우가 있다. `nil` 이 나�
 ### 고친 것을 Emacs 재시작 없이 반영하는 법
 
 ```
-M-x load-library RET mrq RET          ; 고친 파일만
+M-x mrq-reload
 ```
+
+**한 파일만 읽으면 안 된다.** 다른 파일에 새로 생긴 변수가 void 로 남아
+백엔드가 죽는다 — 실제로 `mrq-flymake.el` 만 읽어 `mrq-message-width` 가
+void 가 됐고, 진단이 전부 사라졌다. 이제 그런 경우 `*mrq*` 와 에코 영역에
+이유가 뜬다.
 
 키맵은 빈 채로 `defvar` 하고 `define-key` 를 최상위에서 부르므로 재로드가 그냥
 반영된다. `eval-buffer` 도 된다.

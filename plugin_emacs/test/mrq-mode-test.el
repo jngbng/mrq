@@ -839,5 +839,36 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
               (save-buffer))
             (should (= (line-number-at-pos (window-start)) start))))))))
 
+(ert-deftest mrq-flymake-backend-survives-an-error-and-says-why ()
+  "백엔드가 죽으면 flymake 가 꺼 버리고 **진단이 조용히 0 개**가 된다.
+
+실제로 당했다 — `mrq-core.el' 만 빼고 재로드하자 `mrq-message-width' 가 void
+가 되어 진단이 전부 사라졌고, 이유는 flymake 로그에만 남았다.  사용자에게는
+\"댓글이 있는데 안 보인다\" 로만 보인다."
+  (mrq-test-with-repo (root :files (list (cons "src/api/client.py"
+                                               (mrq-flymake-test--lines 320))))
+    (with-current-buffer (find-file-noselect
+                          (expand-file-name "src/api/client.py" root))
+      (mrq-flymake-setup)
+      (cl-letf (((symbol-function 'mrq-flymake--diagnostics)
+                 (lambda (&rest _) (error "일부러 터뜨림"))))
+        ;; 에러가 백엔드 밖으로 새지 않는다
+        (let ((reported 'none))
+          (mrq-flymake-backend (lambda (diags &rest _) (setq reported diags)))
+          (should (equal reported nil))))
+      ;; 왜 비었는지 `*mrq*` 에 남는다
+      (with-current-buffer "*mrq*"
+        (should (string-match-p "일부러 터뜨림" (buffer-string)))))))
+
+(ert-deftest mrq-reload-reads-every-file-in-dependency-order ()
+  "한 파일만 읽으면 새 defcustom 이 void 가 되어 백엔드가 죽는다."
+  (should (equal mrq-files
+                 '("mrq-core" "mrq-anchor" "mrq-cli" "mrq-flymake"
+                   "mrq-conflict" "mrq-mode" "mrq")))
+  (should (commandp 'mrq-reload))
+  ;; 실제로 돌려도 깨지지 않는다
+  (mrq-reload)
+  (should (fboundp 'mrq-flymake--open-p)))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

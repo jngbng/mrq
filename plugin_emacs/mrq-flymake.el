@@ -24,8 +24,26 @@
   (flymake-mode 1))
 
 (defun mrq-flymake-backend (report-fn &rest _)
-  "flymake 백엔드.  REPORT-FN 에 진단 리스트를 넘긴다."
-  (funcall report-fn (mrq-flymake--diagnostics (current-buffer))))
+  "flymake 백엔드.  REPORT-FN 에 진단 리스트를 넘긴다.
+
+**에러를 밖으로 내보내지 않는다.**  내보내면 flymake 가 이 백엔드를 끄고
+진단이 조용히 0 개가 되며, 이유는 flymake 로그에만 남는다 — 사용자에게는
+\"댓글이 있는데 안 보인다\" 로만 보인다.  실제로 그렇게 당했다: 파일 하나만
+재로드해 `mrq-message-width' 가 void 가 된 적이 있다.
+
+대신 `*mrq*' 와 에코 영역에 **한 번** 알리고 빈 목록을 돌려준다.  숨기는 것이
+아니라 더 눈에 띄는 곳으로 옮기는 것이고, 백엔드가 살아 있어 고친 뒤 바로
+복구된다."
+  (funcall report-fn
+           (condition-case err
+               (mrq-flymake--diagnostics (current-buffer))
+             (error
+              (mrq-core-warn-once
+               (mrq-core-review-dir (buffer-file-name))
+               (car err)
+               (format "mrq: 진단을 만들지 못했습니다 — %s (M-x mrq-reload 로 전부 다시 읽어 보세요)"
+                       (error-message-string err)))
+              nil))))
 
 (defun mrq-flymake--diagnostics (buffer)
   "BUFFER 의 진단 리스트."

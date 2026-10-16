@@ -132,7 +132,7 @@ FILE 을 주지 않으면 이 버퍼가 방문 중인 파일을 쓴다.
                           (goto-char (point-min))
                           (json-parse-buffer :array-type 'list))
                       (error
-                       (mrq-core--warn-once
+                       (mrq-core-warn-once
                         dir 'unreadable
                         (format "mrq: %s 를 읽을 수 없습니다 — %s"
                                 path (error-message-string err)))
@@ -141,7 +141,7 @@ FILE 을 주지 않으면 이 버퍼가 방문 중인 파일을 쓴다.
           (let ((version (gethash "schema_version" parsed)))
             (if (equal version mrq-core-schema-version)
                 parsed
-              (mrq-core--warn-once
+              (mrq-core-warn-once
                dir version
                (format (concat "mrq: %s 의 schema_version 이 %s 입니다 "
                                "(이 mrq.el 은 %d). 동작을 거부합니다 — "
@@ -149,7 +149,7 @@ FILE 을 주지 않으면 이 버퍼가 방문 중인 파일을 쓴다.
                        path version mrq-core-schema-version))
               nil)))))))
 
-(defun mrq-core--warn-once (dir key text)
+(defun mrq-core-warn-once (dir key text)
   "DIR 과 KEY 의 쌍마다 TEXT 를 한 번만 낸다.
 
 flymake 가 편집 중 반복 호출되므로 매번 내면 미니버퍼를 못 쓴다."
