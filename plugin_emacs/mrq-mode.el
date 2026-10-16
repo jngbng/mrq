@@ -121,7 +121,12 @@
         (user-error "%s 가 없습니다" (car target)))
       (find-file path)
       (goto-char (point-min))
-      (forward-line (1- (cdr target))))))
+      (forward-line (1- (cdr target)))
+      ;; 줄 맨 앞이 아니라 **첫 비공백**으로 — flymake 가 밑줄을 긋는 자리와
+      ;; 같다.  `review.json' 에는 열 정보가 없고(GitLab 위치 코멘트가 줄
+      ;; 단위다) 진단의 시작 열은 `flymake-diag-region' 이 만드는데, 그 값이
+      ;; 곧 첫 비공백이다.
+      (back-to-indentation))))
 
 (defun mrq-mode-next-error (n reset)
   "`next-error-function'.  N 개 앞/뒤로, RESET 이면 처음부터.

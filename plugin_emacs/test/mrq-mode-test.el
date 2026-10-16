@@ -757,5 +757,24 @@ python 버퍼(리뷰와 무관한 다른 프로젝트 포함)에서 `C-c m' 이 
             (should (< (abs (- (count-lines (window-start) (point)) above)) 3))
             (should (>= (point) (window-start)))))))))
 
+(ert-deftest mrq-mode-visit-lands-where-the-diagnostic-starts ()
+  "줄 맨 앞이 아니라 **첫 비공백**으로 간다.
+
+`review.json` 에는 열 정보가 없다 (GitLab 위치 코멘트가 줄 단위다).  진단의
+시작 열은 `flymake-diag-region' 이 만드는 값이고 그게 곧 첫 비공백이라,
+`back-to-indentation' 이 밑줄의 시작과 정확히 맞는다."
+  (mrq-test-with-repo (root :files '(("src/api/client.py" . "def f():\n    x = 1\n")))
+    (with-current-buffer (mrq-mode-test--open
+                          root
+                          (concat "<!-- mrq:a1b2c3d4e5f6 v:000002 -->\n"
+                                  "## [ ] src/api/client.py:2 — @jdoe\n\n### reply\n\n"))
+      (goto-char (point-min))
+      (search-forward "## [ ] src/api/client.py:2")
+      (mrq-mode-visit)
+      (should (= (line-number-at-pos) 2))
+      (should (= (current-column) 4))
+      ;; flymake 가 밑줄을 긋는 자리와 같은가
+      (should (= (point) (car (flymake-diag-region (current-buffer) 2)))))))
+
 (provide 'mrq-mode-test)
 ;;; mrq-mode-test.el ends here

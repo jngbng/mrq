@@ -34,6 +34,15 @@
   :type 'boolean
   :group 'mrq)
 
+(defcustom mrq-message-width nil
+  "진단 메시지의 최대 너비.  nil 이면 프레임 너비에 맞춘다.
+
+에코 영역은 한 줄이라 그보다 길게 만들 이유가 없지만, 고정값으로 짧게 자르면
+넓은 화면에서 공간을 버린다.  전부 보려면 `C-c m r' 로 `review.md' 의 그
+스레드로 가거나 `M-x flymake-show-buffer-diagnostics' 를 쓴다."
+  :type '(choice (const :tag "프레임 너비" nil) integer)
+  :group 'mrq)
+
 (defconst mrq-core-schema-version 1
   "이 플러그인이 읽을 수 있는 `review.json' 의 `schema_version'.")
 

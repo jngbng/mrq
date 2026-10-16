@@ -151,14 +151,33 @@ rename 은 여전히 CLI 의 git 매핑이 필요하고 `mrq-reanchor' 가 그�
 (defun mrq-flymake--text (thread location)
   "THREAD 의 진단 메시지를 한 줄로 만든다.
 
-루트 노트의 첫 줄을 자르고 LOCATION 으로 `[fuzzy]' 여부를 정한다."
-  (let* ((root (car (gethash "notes" thread)))
-         (author (and root (gethash "author" root)))
+본문의 **줄바꿈과 연속 공백을 한 칸으로 접은 뒤** `mrq-message-width' 까지
+자른다.  첫 줄에서 끊으면 \"첫 줄입니다.\" 같은 머리말만 보이고 정작 내용이
+사라진다.
+
+노트가 둘 이상이면 `답글 N' 을 덧붙인다 — 잘린 메시지만 보고 \"가서 읽을
+값이 있나\" 를 판단할 수 있어야 한다.  전부 읽는 경로는 `C-c m r'(그 스레드의
+`review.md' 블록)과 `flymake-show-buffer-diagnostics' 다.
+
+LOCATION 으로 `[fuzzy]' 여부를 정한다."
+  (let* ((notes (gethash "notes" thread))
+         (root (and (> (length notes) 0) (elt notes 0)))
+         (author (or (and root (gethash "author" root)) "?"))
          (body (or (and root (gethash "body" root)) ""))
-         (first-line (car (split-string body "\n"))))
-    (concat "@" (or author "?") ": "
-            (truncate-string-to-width first-line 70 nil nil "…")
-            (if (equal (gethash "confidence" location) "fuzzy") " [fuzzy]" ""))))
+         (replies (max 0 (1- (length notes))))
+         (head (concat "@" author ": "))
+         (tail (concat (if (> replies 0) (format "  (답글 %d)" replies) "")
+                       (if (equal (gethash "confidence" location) "fuzzy")
+                           " [fuzzy]" "")))
+         (room (max 16 (- (or mrq-message-width (1- (frame-width)))
+                          (string-width head) (string-width tail)))))
+    (concat head
+            (truncate-string-to-width (mrq-flymake--one-line body) room nil nil "…")
+            tail)))
+
+(defun mrq-flymake--one-line (text)
+  "TEXT 의 줄바꿈과 연속 공백을 한 칸으로 접는다."
+  (string-trim (replace-regexp-in-string "[ \t\n\r]+" " " text)))
 
 ;;;###autoload
 (defun mrq-flymake-thread-at-point (&optional position)

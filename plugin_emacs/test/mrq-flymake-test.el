@@ -297,6 +297,30 @@ span 을 그렇게 잃는다."
       (push (if (= (1+ i) at) text "pass") lines))
     (concat (string-join (nreverse lines) "\n") "\n")))
 
+(defun mrq-flymake-test--with-extra-notes (id count)
+  "ID 스레드에 노트를 COUNT 개 덧붙인 `review.json' 문자열."
+  (let* ((review (json-parse-string (mrq-test-sample-review)))
+         (thread (seq-find (lambda (th) (equal (gethash "id" th) id))
+                           (gethash "threads" review)))
+         (notes (gethash "notes" thread))
+         (extra nil))
+    (dotimes (i count)
+      (let ((note (copy-hash-table (aref notes 0))))
+        (puthash "id" (+ 90000 i) note)
+        (puthash "author" "kim" note)
+        (puthash "body" (format "덧붙인 답글 %d" (1+ i)) note)
+        (push note extra)))
+    (puthash "notes" (vconcat notes (nreverse extra)) thread)
+    (json-serialize review)))
+
+(defun mrq-flymake-test--with-body (id body)
+  "ID 스레드 **루트 노트**의 본문을 BODY 로 바꾼 `review.json' 문자열."
+  (let* ((review (json-parse-string (mrq-test-sample-review)))
+         (thread (seq-find (lambda (th) (equal (gethash "id" th) id))
+                           (gethash "threads" review))))
+    (puthash "body" body (aref (gethash "notes" thread) 0))
+    (json-serialize review)))
+
 (defun mrq-flymake-test--with-state (id state &optional reply)
   "ID 스레드의 `local.state' 를 STATE 로, 있으면 `local.reply' 를 REPLY 로."
   (let* ((review (json-parse-string (mrq-test-sample-review)))
@@ -334,6 +358,54 @@ span 을 그렇게 잃는다."
       (puthash "notes" (vector note) twin))
     (puthash "threads" (vconcat threads (list twin)) review)
     (json-serialize review)))
+
+(ert-deftest mrq-flymake-message-fills-the-available-width ()
+  "첫 줄에서 끊지 않는다 — 줄바꿈을 공백으로 접고 폭이 닿는 데까지 보여준다.
+
+`rendered.json' 의 `7a0b1c2d3e4f' 처럼 본문이 짧으면 그대로, 길면 잘린다."
+  (let* ((long (concat "첫 줄입니다.\n둘째 줄에 진짜 내용이 있습니다 — "
+                       "여기까지 보여야 합니다."))
+         (text (mrq-flymake-test--with-body "f6a1b2c3d4e5" long)))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (let* ((mrq-message-width 200)
+             (msg (flymake-diagnostic-text
+                   (car (mrq-flymake-test--diagnostics
+                         (expand-file-name "src/api/retry.py" root))))))
+        (should (string-match-p "둘째 줄에 진짜 내용" msg))
+        (should-not (string-match-p "\n" msg))))))
+
+(ert-deftest mrq-flymake-message-truncates-to-the-configured-width ()
+  (let ((text (mrq-flymake-test--with-body "f6a1b2c3d4e5" (make-string 300 ?가))))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (let* ((mrq-message-width 40)
+             (msg (flymake-diagnostic-text
+                   (car (mrq-flymake-test--diagnostics
+                         (expand-file-name "src/api/retry.py" root))))))
+        (should (<= (string-width msg) 40))
+        (should (string-suffix-p "…" msg))))))
+
+(ert-deftest mrq-flymake-message-says-how-many-replies-follow ()
+  "잘린 메시지만 보고 \"가서 읽을 값이 있나\" 를 판단할 수 있어야 한다."
+  (let ((text (mrq-flymake-test--with-extra-notes "f6a1b2c3d4e5" 2)))
+    (mrq-test-with-repo (root :review text
+                              :files (list (cons "src/api/retry.py"
+                                                 (mrq-flymake-test--lines 40))))
+      (let ((msg (flymake-diagnostic-text
+                  (car (mrq-flymake-test--diagnostics
+                        (expand-file-name "src/api/retry.py" root))))))
+        (should (string-match-p "답글 2" msg)))))
+  ;; 노트가 하나뿐이면 꼬리를 붙이지 않는다
+  (mrq-test-with-repo (root :files (list (cons "src/api/retry.py"
+                                               (mrq-flymake-test--lines 40))))
+    (should-not (string-match-p
+                 "답글"
+                 (flymake-diagnostic-text
+                  (car (mrq-flymake-test--diagnostics
+                        (expand-file-name "src/api/retry.py" root))))))))
 
 (provide 'mrq-flymake-test)
 ;;; mrq-flymake-test.el ends here
