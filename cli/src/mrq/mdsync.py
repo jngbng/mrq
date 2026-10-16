@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import sys
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from mrq import SCHEMA_VERSION, conflict, mdparse, model, reanchor, store, surface, threads
+from mrq import SCHEMA_VERSION, conflict, mdparse, model, prefer, reanchor, store, surface
 from mrq.errors import SchemaVersionError, UsageError
 
 
@@ -31,8 +32,7 @@ def perform(
     iid: int,
     path: Path,
     *,
-    prefer: str | None = None,
-    only_refs: tuple[str, ...] = (),
+    prefer_values: Sequence[str] | None = None,
 ) -> Outcome:
     """md 를 json 에 반영하고 재앵커링한다. 호출자가 락을 잡고 있어야 한다.
 
@@ -74,13 +74,17 @@ def perform(
     if errors:
         return Outcome(errors=errors)
 
-    # 모호하거나 모르는 접두사는 여기서 exit 1 로 끝낸다 — plan_sync 에
-    # 닿기 전이므로 아직 아무것도 쓰지 않았다. 접두사 해석은 threads.py
-    # 하나로 모은다(`cli.md` §1 MUST) — conflict.py 는 완전한 id 만 받는다.
-    only_ids = tuple(threads.resolve_ref(review, ref).id for ref in only_refs)
-    applied, conflicts, extra = conflict.plan_sync(review, parsed, prefer=prefer, only=only_ids)
+    # 망가진 문법, 모호하거나 모르는 접두사는 여기서 exit 1 로 끝낸다 —
+    # plan_sync 에 닿기 전이므로 아직 아무것도 쓰지 않았다. 접두사 해석은
+    # threads.py 하나로 모은다(`cli.md` §1 MUST) — conflict.py 는 완전한
+    # id 만 받는다.
+    resolution = prefer.resolve(review, prefer.parse(prefer_values))
+    applied, conflicts, extra = conflict.plan_sync(review, parsed, resolution=resolution)
     if conflicts:
-        return Outcome(conflicts=conflicts)
+        # 경고를 함께 돌려준다 — 버리면 `--prefer <ID>=` 오타가 **여러 충돌을
+        # 한 번에 지목하는 호출**, 즉 오타가 가장 잘 나는 상황에서만 조용해진다.
+        # 그 경고가 존재하는 이유가 정확히 그것이다 (`cli.md` §5 MUST).
+        return Outcome(conflicts=conflicts, warnings=parsed.warnings + extra)
 
     at = surface.now()
     by_id = {t.id: t for t in review.threads}
@@ -179,7 +183,10 @@ def report_conflicts(iid: int, conflicts: list[conflict.Conflict], *, json_mode:
             print(f"  md   [{item.md_state}] {item.md_reply!r}", file=sys.stderr)
             print(f"  json [{item.json_state}] {item.json_reply!r}", file=sys.stderr)
         print(
-            "`mrq sync --prefer md|json [--thread ID]` 로 해소하세요. 아무것도 쓰지 않았습니다.",
+            "`mrq sync --prefer md|json` 으로 전체를, "
+            "`mrq sync --prefer <스레드>=md|json` 으로 스레드마다 해소하세요 "
+            "(일부만 지정하면 나머지 충돌이 남아 역시 아무것도 쓰지 않습니다). "
+            "아무것도 쓰지 않았습니다.",
             file=sys.stderr,
         )
     return 3

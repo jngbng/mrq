@@ -80,11 +80,13 @@ def run(args) -> int:
             outcome = mdsync.perform(root, iid, path)
             if outcome.errors:
                 return mdsync.report_errors(outcome.errors, json_mode=args.json)
+            # 충돌보다 **먼저** 찍는다 — `commands/sync` 와 같은 순서다.
+            # exit 3 으로 끝날 때 경고를 버리면 md 쪽 문제가 조용해진다.
+            for warning in outcome.warnings:
+                print(mdsync.format_warning(warning), file=sys.stderr)
             if outcome.conflicts:
                 return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
             review = outcome.review
-            for warning in outcome.warnings:
-                print(mdsync.format_warning(warning), file=sys.stderr)
 
             # 전체를 한 번만 조회한다(MUST). 스레드별 GET 은 N+1 이다.
             snapshot = discussions.to_threads(discussions.fetch(iid), review.me.username)

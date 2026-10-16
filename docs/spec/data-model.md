@@ -381,8 +381,9 @@ reply`/`mrq state`(`cli.md` §10)가 `touched_at`을 기록한 **뒤에** md를 
 
 - 충돌이 **하나라도** 있으면 아무것도 쓰지 않고 **exit 3**으로 끝낸다(MUST)
 - 충돌 스레드 목록, 각각의 md 쪽 값과 json 쪽 값을 보고해야 한다(MUST)
-- `mrq sync --prefer md|json [--thread ID]...`로 해소한다. `--thread` 없으면 충돌한
-  전체, 주면 지정한 것만
+- `mrq sync --prefer [ID=]md|json`로 해소한다. 스코프 없이 주면 충돌한 전체,
+  `ID=` 를 붙이면 그 스레드만. 좁은 스코프가 순서와 무관하게 이긴다(`cli.md` §5).
+  **일부만 지정하면 나머지 충돌이 남아 여전히 아무것도 쓰지 않는다**
 
 ---
 

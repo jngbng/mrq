@@ -217,6 +217,107 @@ def test_sync_prefer_json_keeps_the_cli_value(conflicted):
     assert thread.local.reply == "AI: 상위에서 설정 중입니다."
 
 
+@pytest.fixture
+def two_conflicts(synced):
+    """두 스레드가 동시에 충돌한 상태. 혼합 방향 해소의 대상이다.
+
+    `conflicted` 와 같은 구성을 둘로 늘린 것이다 — AI 가 렌더 후 CLI 로 고쳤고
+    사람이 md 에서 같은 스레드를 다르게 고쳤다.
+    """
+    review = _json(synced)
+    for thread_id, reply in (
+        ("a1b2c3d4e5f6", "AI: 상위에서 설정 중입니다."),
+        ("b2c3d4e5f6a1", "AI: 세션 재사용이 맞습니다."),
+    ):
+        target = next(t for t in review.threads if t.id == thread_id)
+        target.local.state = "replied"
+        target.local.reply = reply
+        target.local.touched_by = "cli"
+        target.local.touched_at = surface.now()
+    store.atomic_write_text(store.review_json_path(synced, 1234), model.dumps(review))
+
+    text = _md(synced).read_text(encoding="utf-8")
+    text = edit_block(text, "a1b2c3d4e5f6", state="done")
+    text = edit_block(text, "b2c3d4e5f6a1", state="skipped")
+    _md(synced).write_text(text, encoding="utf-8")
+    return synced
+
+
+def test_sync_scoped_prefer_leaves_the_other_conflict(two_conflicts, capsys):
+    """부분 해소는 **여전히 전부 실패**다 (data-model.md §5.3).
+
+    이것이 계획 4 의 충돌 UI 모양을 결정한다 — 키를 누를 때마다 sync 를 부르면
+    첫 키부터 실패한다.
+    """
+    before = store.review_json_path(two_conflicts, 1234).read_text(encoding="utf-8")
+    assert main(["sync", "--json", "--prefer", "a1b2=md"]) == 3
+    assert store.review_json_path(two_conflicts, 1234).read_text(encoding="utf-8") == before
+    payload = json.loads(capsys.readouterr().out)
+    assert [c["thread"] for c in payload["conflicts"]] == ["b2c3d4e5f6a1"]
+
+
+@pytest.mark.parametrize(
+    "flags",
+    [
+        ["--prefer", "a1b2=md", "--prefer", "b2c3=json"],
+        ["--prefer", "b2c3=json", "--prefer", "a1b2=md"],
+        ["--prefer", "md", "--prefer", "b2c3=json"],
+        ["--prefer", "b2c3=json", "--prefer", "md"],
+    ],
+)
+def test_sync_narrow_scope_wins_regardless_of_order(two_conflicts, flags):
+    """좁은 스코프가 순서와 무관하게 이긴다.
+
+    뒤의 두 경우가 위치 기반 fold 와 갈린다 — fold 였다면 세 번째는 b2c3 도
+    md 가 되고 네 번째는 전부 md 가 된다.
+    """
+    assert main(["sync", *flags]) == 0
+    review = _json(two_conflicts)
+    assert next(t for t in review.threads if t.id == "a1b2c3d4e5f6").local.state == "done"
+    assert next(t for t in review.threads if t.id == "b2c3d4e5f6a1").local.state == "replied"
+
+
+def test_sync_pick_on_a_non_conflicting_thread_warns(conflicted, capsys):
+    """`ID=` 로 지목했는데 충돌이 아니면 경고한다.
+
+    스코프 없는 `--prefer md` 는 경고하지 않는다 — 충돌이 없을 때 쓰는 것이
+    이상하지 않다.
+    """
+    assert main(["sync", "--prefer", "md", "--prefer", "f6a1=json"]) == 0
+    assert "충돌이 아닙니다" in capsys.readouterr().err
+
+
+def test_sync_reports_an_unused_pick_even_when_conflicts_remain(two_conflicts, capsys):
+    """exit 3 경로에서도 "충돌이 아닙니다" 경고가 나와야 한다 (`cli.md` §5 MUST).
+
+    오타를 잡으려고 만든 경고가, 오타가 가장 잘 나는 상황(여러 충돌을 한 번에
+    지목하는 호출)에서만 사라지면 안 된다.
+    """
+    assert main(["sync", "--prefer", "f6a1=md", "--prefer", "b2c3=json"]) == 3
+    assert "충돌이 아닙니다" in capsys.readouterr().err
+
+
+def test_sync_conflict_message_states_that_nothing_was_written(conflicted, capsys):
+    """exit 2 와 같은 어조여야 한다 — 조건문이 아니라 평서문으로 알린다."""
+    assert main(["sync"]) == 3
+    assert "아무것도 쓰지 않았습니다" in capsys.readouterr().err
+
+
+def test_sync_repeated_scopeless_prefer_takes_the_last(conflicted):
+    # 같은 스코프 안에서는 뒤가 이긴다. json 이 먼저 와도 md 가 적용된다.
+    assert main(["sync", "--prefer", "json", "--prefer", "md"]) == 0
+    assert next(t for t in _json(conflicted).threads if t.id == "a1b2c3d4e5f6").local.state == (
+        "done"
+    )
+
+
+def test_sync_conflict_message_shows_the_new_grammar(conflicted, capsys):
+    assert main(["sync"]) == 3
+    err = capsys.readouterr().err
+    assert "--prefer <스레드>=md|json" in err
+    assert "--thread" not in err
+
+
 def test_sync_detects_conflict_from_a_real_reply_then_stale_buffer_save(synced, capsys):
     """Critical 1 회귀 테스트 — `cli.md` §10 이 정한 순서 그대로 `mrq reply` 를
     시뮬레이션한 뒤, 사람이 그 재렌더를 보지 못한 채 **이전** 버퍼를 저장한다.
@@ -269,13 +370,13 @@ def with_ambiguous_prefix(synced):
     return synced
 
 
-def test_sync_thread_ambiguous_prefix_exits_1_before_writing(with_ambiguous_prefix):
+def test_sync_prefer_ambiguous_prefix_exits_1_before_writing(with_ambiguous_prefix):
     # IMPORTANT 3 회귀 테스트 — 모호한 접두사가 사용자가 지정하지 않은 스레드에
     # `--prefer` 를 조용히 적용하면 안 된다.
     before_json = store.review_json_path(with_ambiguous_prefix, 1234).read_text(encoding="utf-8")
     before_md = _md(with_ambiguous_prefix).read_text(encoding="utf-8")
 
-    assert main(["sync", "--prefer", "md", "--thread", "a1b2"]) == 1
+    assert main(["sync", "--prefer", "a1b2=md"]) == 1
 
     assert (
         store.review_json_path(with_ambiguous_prefix, 1234).read_text(encoding="utf-8")
@@ -284,15 +385,15 @@ def test_sync_thread_ambiguous_prefix_exits_1_before_writing(with_ambiguous_pref
     assert _md(with_ambiguous_prefix).read_text(encoding="utf-8") == before_md
 
 
-def test_sync_thread_unknown_prefix_exits_1(synced):
+def test_sync_prefer_unknown_prefix_exits_1(synced):
     before = store.review_json_path(synced, 1234).read_text(encoding="utf-8")
-    assert main(["sync", "--prefer", "md", "--thread", "zzzzzzzzzzzz"]) == 1
+    assert main(["sync", "--prefer", "zzzzzzzzzzzz=md"]) == 1
     assert store.review_json_path(synced, 1234).read_text(encoding="utf-8") == before
 
 
-def test_sync_thread_empty_string_exits_1(synced):
+def test_sync_prefer_empty_scope_exits_1(synced):
     before = store.review_json_path(synced, 1234).read_text(encoding="utf-8")
-    assert main(["sync", "--prefer", "md", "--thread", ""]) == 1
+    assert main(["sync", "--prefer", "=md"]) == 1
     assert store.review_json_path(synced, 1234).read_text(encoding="utf-8") == before
 
 

@@ -13,23 +13,22 @@ def run(args) -> int:
     root, iid, path = context.root, context.iid, context.path
 
     with store.review_lock(root, iid):
-        outcome = mdsync.perform(
-            root,
-            iid,
-            path,
-            prefer=args.prefer,
-            only_refs=tuple(args.thread or ()),
-        )
+        outcome = mdsync.perform(root, iid, path, prefer_values=args.prefer)
     if outcome.errors:
         return mdsync.report_errors(outcome.errors, json_mode=args.json)
-    if outcome.conflicts:
-        return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
 
     # 경고는 --json 여부와 무관하게 stderr 로도 보낸다(`cli.md` §2 MUST) —
     # stdout 은 순수 JSON 이어야 하므로 --json 일 때도 페이로드에만 담으면
     # 사람이 터미널에서 그냥 보는 경로가 없어진다.
+    #
+    # 충돌(exit 3)**보다 먼저** 찍는다. `--prefer <ID>=` 가 충돌 아닌 스레드를
+    # 지목한 경고는 나머지 충돌이 남아 exit 3 으로 끝날 때도 나와야 한다 —
+    # 오타는 여러 충돌을 한 번에 지목할 때 가장 잘 난다.
     for warning in outcome.warnings:
         print(mdsync.format_warning(warning), file=sys.stderr)
+
+    if outcome.conflicts:
+        return mdsync.report_conflicts(iid, outcome.conflicts, json_mode=args.json)
 
     if args.json:
         json.dump(

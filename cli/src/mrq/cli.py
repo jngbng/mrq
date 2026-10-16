@@ -31,9 +31,13 @@ def build_parser() -> argparse.ArgumentParser:
 
     sync = sub.add_parser("sync", help="review.md 를 json 에 반영하고 재앵커링한다")
     sync.add_argument("--json", action="store_true")
-    sync.add_argument("--prefer", choices=["md", "json"], default=None)
     sync.add_argument(
-        "--thread", action="append", default=None, help="--prefer 를 적용할 스레드 (반복 가능)"
+        "--prefer",
+        action="append",
+        default=None,
+        metavar="[ID=]md|json",
+        help="충돌 해소 방향. 스코프 없이 주면 전체, `ID=` 를 붙이면 그 스레드만. "
+        "반복 가능하며 좁은 스코프가 순서와 무관하게 이긴다",
     )
 
     status = sub.add_parser("status", help="전송 직전 검토면을 보여준다")

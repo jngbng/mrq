@@ -176,7 +176,7 @@ glab api "projects/jngbng%2Fmr-helper/merge_requests/<iid>/discussions" \
 | `v` 토큰 없음 | 예 | 충돌, exit 3 |
 
 두 번째 행이 `v` 해시를 도입한 이유이고, 네 번째 행이 "하나라도 충돌하면 전체 거부"를
-지키는지 본다. `sync --prefer md|json`도 같은 표로 검증한다.
+지키는지 본다. `sync --prefer [ID=]md|json`도 같은 표로 검증한다.
 
 ---
 
