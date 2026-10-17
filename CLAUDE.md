@@ -100,9 +100,9 @@ testdata/       세 구현이 공유하는 테스트 데이터
 ```bash
 make test              # 세 하위 전부
 make test-cli          # Python만
-make test-emacs        # 계획 4 까지는 안내 메시지만
+make test-emacs        # elisp ERT
 make test-vscode       # 계획 5 까지는 안내 메시지만
-make conformance       # 적합성 테이블 교차 실행 (계획 4 에서 생김)
+make conformance       # 적합성 테이블 교차 실행
 make lint
 make deps
 ```

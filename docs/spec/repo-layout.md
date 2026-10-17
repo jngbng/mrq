@@ -42,17 +42,16 @@ mrq/
     tests/
       fixtures/                    glab API 응답 (CLI 전용)
       bin/glab                     가짜 glab
-  plugin_emacs/                    ← 계획 4 에서 생성
-    mrq.el  mrq-flymake.el  ...
+  plugin_emacs/
+    mrq.el  mrq-core.el  mrq-flymake.el  mrq-mode.el  ...
     test/
   plugin_vscode/                   ← 계획 5 에서 생성
     package.json  tsconfig.json
     src/  src/test/
 ```
 
-`plugin_emacs/`, `plugin_vscode/`, `testdata/conformance/`는 아직 없다. 각각 계획 4·5
-에서 만든다(`docs/plans/README.md`). 루트 `Makefile`의 해당 타깃은 그때까지 안내
-메시지만 출력한다.
+`plugin_vscode/`는 아직 없다 — 계획 5 에서 만든다(`docs/plans/README.md`). 루트
+`Makefile`의 `test-vscode`는 그때까지 안내 메시지만 출력한다.
 
 ## 2.1 `cli/src/mrq/` 모듈
 
