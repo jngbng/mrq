@@ -30,8 +30,8 @@ CLI(`mrq`)가 담당한다. 에디터 플러그인은 `review.json`을 읽고 CL
 덕분에 Emacs 플러그인과 VSCode 확장이 같은 데이터를 보고, AI 에이전트도 별도 도구 없이
 참여한다.
 
-예외는 하나뿐이다 — 에디터는 저장하지 않은 버퍼에서 앵커 한 줄을 찾는 단순 검색을
-할 수 있다. 범위는 `spec/reanchoring.md` §6에 규범으로 묶여 있다 ([0003](decisions/0003-split-reanchoring-responsibility.md)).
+예외는 하나뿐이다 — 에디터는 버퍼에서 앵커 한 줄을 찾는 단순 검색을
+할 수 있다(저장 여부를 보지 않는다). 범위는 `spec/reanchoring.md` §6에 규범으로 묶여 있다 ([0003](decisions/0003-split-reanchoring-responsibility.md)).
 
 **2. 정본은 JSON, 편집면은 Markdown.** `review.json`이 유일한 진실원천이다.
 `review.md`는 사람과 AI가 편집하는 표면이며, 파싱에 실패해도 json은 온전하므로 상태가
@@ -143,6 +143,10 @@ hunk 헤더로 라인 맵을 만들면 정확하고, 문자열 탐색은 그것�
 알고리즘 전체는 `spec/reanchoring.md`에 있다. 품질 목표는 `exact ≥ 75%`,
 `stale ≤ 10%`이며 회귀 테스트로 강제한다.
 
+위치를 찾지 못한 것(`stale`)에는 **진단을 띄우지 않는다.** 파일 1행에 몰아두는 것이
+위치 신뢰를 잃는 가장 빠른 길이다 — `review.md`의 배지와 `status`의 수치가 그것을
+알리는 면이다 (`spec/data-model.md` §4.9).
+
 ### 5.2 중복 전송
 
 `push` 직후 네트워크가 끊기거나 사용자가 두 번 실행하면 답글이 두 번 올라간다.
@@ -152,6 +156,10 @@ hunk 헤더로 라인 맵을 만들면 정확하고, 문자열 탐색은 그것�
 
 전송에 성공하면 `local.reply`를 비운다. 비우지 않으면 재pull 후 같은 답글이 md에
 인용과 reply 양쪽으로 두 번 보인다.
+
+전송 결과는 **스레드마다 즉시 json에 쓴다**. 중간에 죽어도 재실행이 남은 것부터
+이어가야 하고, 그 보장이 병렬 전송과 같이 갈 수 없다는 것이 지금의 순차 구조다
+(`spec/cli.md` §9).
 
 ### 5.3 동시 변경
 
@@ -213,6 +221,40 @@ code block 안에서는 앵커를 인식하지 않는다. `### reply` 밖은 전
 파서는 펜스 때문에 건너뛴 앵커 id를 기록하고, 그 id가 `review.json`에 있으면서
 블록이 없을 때 `sync`가 exit 2로 끊는다 (`spec/review-md.md` §7). 인용은 json에
 없는 id를 쓰므로 두 경우가 정확히 갈린다.
+
+### 5.10 파일 감시는 `review.json`이 아니라 그 디렉터리에 건다
+
+CLI가 temp 파일 + `os.replace`로 쓰므로 inode가 매번 바뀐다. 파일에 건 watch는 첫
+교체 뒤 끊긴 inode에 남아 **조용히 죽고**, 증상은 "코멘트가 있는데 진단이 갱신되지
+않는다"뿐이다. 디렉터리에 걸면 첫 `pull`이 json을 만드는 순간도 잡는다.
+
+**테스트는 두 번 연속 고쳐야 이 결함을 본다.** Emacs는 파일 watch도 부모 디렉터리를
+보므로 동등하지만 VSCode는 같은 보장을 가정할 수 없다 (`spec/editor.md` §3.1).
+
+### 5.11 소스 버퍼는 "닫히지 않은 것"을 보여준다
+
+flymake는 닫힌 스레드를 감춘다 — 서버가 닫았든(`server.resolved`) 내가
+닫았든(`skipped`). 단 미전송 답글(`local.reply`)이 있으면 보인다. `state == todo`로
+거르면 `[~]`(답글만)와 미전송 `[x]`가 사라지는데, 전자는 서버에서 살아 있는 대화이고
+후자는 아직 보낼 것이 남은 스레드다.
+
+`review.md`는 `skipped`도 보여준다 — 거기는 결정을 **바꾸는** 면이다
+(`spec/editor.md` §3.1).
+
+### 5.12 `bulk_publish`는 내 draft 전부를 발행한다
+
+선택적 발행 파라미터가 없으므로 GitLab UI에서 쓰던 미완성 draft까지 함께 공개된다.
+mrq가 만들지 않은 draft가 있으면 확인을 요구한다.
+
+draft 생성은 **전송이 아니다** — `pushed_hash`와 `local.reply`는 발행 시점에만
+갱신한다 ([0012](decisions/0012-draft-is-not-a-send.md), `spec/cli.md` §9).
+
+### 5.13 응답에서 사라진 스레드
+
+`pull`은 서버 응답에 없는 스레드를 제거하지만, **미전송 작업이 있으면 지우지 않고**
+`server.missing`으로 표시하고 `push`가 제외한다. 실제 삭제와 페이지 결손 같은 일시적
+결손을 응답만으로 가를 수 없고, 전송하지 않은 답글은 복구 불가능하다
+([0011](decisions/0011-preserve-missing-threads.md), `spec/data-model.md` §4.10).
 
 ---
 
