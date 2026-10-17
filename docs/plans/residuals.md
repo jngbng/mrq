@@ -130,8 +130,6 @@
 - `gitcmd.run` 이 공개라 래퍼를 거치지 않을 문이 열려 있다. "모든 git 호출이
   이름 붙은 감사 가능한 래퍼"라는 규율이 `reanchor` 가 네트워크를 안 탄다는 것을
   증명하게 해 준 장치다. `_run` + 이름 붙은 래퍼를 고려할 것
-- `.gitignore` 가 `cli/uv.lock` 을 제외하는데 `make deps` 는 `uv sync` 다.
-  고정되지 않은 락파일은 피할 수 있는 드리프트다
 - `Stats.count` 가 검증 없이 `setattr` 을 쓴다. 네 번째 confidence 값이 생기면
   `as_dict` 가 버리는 유령 속성이 조용히 만들어진다 — 거짓말하는 품질 게이트가 된다
 

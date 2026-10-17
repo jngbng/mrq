@@ -95,29 +95,18 @@ testdata/       세 구현이 공유하는 테스트 데이터
 
 ## 명령
 
-루트에서 `make`를 쓴다. 하위마다 다른 도구를 외우지 않는다.
+루트에서 `make`를 쓴다. 하위마다 다른 도구를 외우지 않는다. (`uv` 도구 필요)
 
 ```bash
 make test              # 세 하위 전부
-make test-cli          # Python만
+make test-cli          # ARGS 인자로 테스트 범위를 좁힐 수 있다: make test-cli ARGS="-k anchor"
 make test-emacs        # elisp ERT
 make test-vscode       # 계획 5 까지는 안내 메시지만
 make conformance       # 적합성 테이블 교차 실행
 make lint
-make deps
+make fmt               # ruff format + ruff check --fix
+make deps              # 의존을 다시 받고 싶을 때만
 ```
-
-**`make`는 venv 가 활성화된 셸을 가정한다.** 활성화하지 않았다면 venv 바이너리를
-직접 부르는 쪽이 확실하다 — `make`가 `/usr/bin/python` 을 집어 `No module named
-pytest` 로 실패한다:
-
-```bash
-cd cli && ./.venv/bin/python -m pytest          # 전체
-cd cli && ./.venv/bin/python -m pytest -k anchor
-cd cli && ./.venv/bin/ruff format . && ./.venv/bin/ruff check --fix .
-```
-
-venv 가 없으면 `cd cli && uv sync && uv pip install -e .` (또는 `pip install -e .`).
 
 ## 작업 방식
 

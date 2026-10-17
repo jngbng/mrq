@@ -38,6 +38,7 @@ mrq/
     conformance/anchor.json        앵커 검색 적합성 테이블
   cli/
     pyproject.toml
+    uv.lock
     src/mrq/                       모듈 분해는 아래 §2.1
     tests/
       fixtures/                    glab API 응답 (CLI 전용)
@@ -116,8 +117,10 @@ CLI를 루트에 두면 `pytest`가 cd 없이 돌아 편하지만 리포 루트�
 | `plugin_emacs` | 없음. Makefile + `emacs -Q -batch` | ERT | byte-compile 경고, `checkdoc` |
 | `plugin_vscode` | npm + TypeScript | vitest | eslint |
 
-- `cli`는 `pip install -e cli/`로도 설치 가능해야 한다(MUST). uv는 개발 편의이며
-  필수 의존이 아니다
+- **개발에는 uv 가 필수다**(MUST). 루트 `Makefile`의 cli 타깃이 전부
+  `uv run --directory cli`로 돌고, 그것이 venv 생성과 lock 동기화를 맡는다
+- 그래도 패키지 메타데이터는 표준으로 유지한다(MUST) — PEP 621 + hatchling 이라
+  `pip install -e cli/`로도 설치되고, 배포 경로가 uv 에 묶이지 않는다
 - **HTTP 클라이언트를 의존에 넣지 않는다**(MUST NOT) — `requests`, `httpx`,
   표준 라이브러리의 `urllib` 모두. 네트워크는 `glab api` 서브프로세스만 쓴다.
   **git 래퍼 라이브러리도 넣지 않는다**(MUST NOT) — `GitPython` 등. git은
@@ -246,8 +249,15 @@ make test-emacs
 make test-vscode
 make conformance   적합성 테이블만 (세 구현 교차)
 make lint
-make deps          emacs: markdown-mode 설치 / vscode: npm ci
+make fmt           ruff format + ruff check --fix
+make deps          의존을 다시 받고 싶을 때만
 ```
 
 루트에서 한 명령으로 전부 돌 수 있어야 한다(MUST). 하위마다 다른 도구를 외우게 하지
 않는다.
+
+**환경 준비도 타깃이 맡는다**(MUST). cli 타깃은 `uv run`이라 venv 생성과 lock
+동기화가 호출마다 일어나고, emacs 타깃은 `.elpa/`의 스탬프 파일을 의존해
+`markdown-mode`가 없으면 설치한다. "먼저 venv 를 활성화하라"나 "먼저 `make deps`를
+돌려라"를 사람이 외워야 하면 진입점을 하나로 둔 의미가 없다. `deps`는 의존을 다시
+받고 싶을 때의 강제 경로로만 남긴다.
